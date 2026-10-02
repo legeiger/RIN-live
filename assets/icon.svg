@@ -1,6 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <path fill="#0F3460" d="M0 512V0h196l-56 126 74 75-80 77 83 79-66 155H0z"/>
-  <path fill="#4FC3F7" d="M512 0v512H316l57-126-75-76 81-77-84-79L361 0h151z"/>
-  <path fill="#FFFFFF" d="M267 52c-70 0-126 56-126 126 0 91 126 236 126 236s126-145 126-236C393 108 337 52 267 52zm0 184a58 58 0 1 1 0-116 58 58 0 0 1 0 116z"/>
-  <path fill="#0F3460" d="M267 142a36 36 0 1 0 0 72 36 36 0 0 0 0-72z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <!-- Definitionen & Styles -->
+  <defs>
+    <style>
+      .bg { fill: #0a0c10; }
+      .app-frame { fill: none; stroke: #ffffff; stroke-opacity: 0.08; stroke-width: 2; }
+      .brand-text {
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 116px;
+        font-weight: 900;
+        letter-spacing: 2px;
+        fill: #ffffff;
+      }
+      .axis-line { stroke: #1e2633; stroke-width: 2.5; stroke-dasharray: 4 6; stroke-linecap: round; }
+      .graph-line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .curve-top { stroke: #10b981; stroke-width: 9; }
+      .curve-mid { stroke: #f59e0b; stroke-width: 9; }
+      .curve-bot { stroke: #ef4444; stroke-width: 9; }
+      .origin-node { fill: #334155; }
+    </style>
+  </defs>
+
+  <!-- Hintergrund (App-Icon Canvas) -->
+  <g id="background">
+    <rect class="bg" width="500" height="500" rx="108" />
+    <rect class="app-frame" x="2" y="2" width="496" height="496" rx="106" />
+  </g>
+
+  <!-- Branding / Logo-Schriftzug -->
+  <g id="logo-branding">
+    <text class="brand-text" x="54" y="154">RIN</text>
+  </g>
+
+  <!-- Dezentes Koordinatensystem / Basislinien -->
+  <g id="axes">
+    <line class="axis-line" x1="56" y1="430" x2="444" y2="430" />
+    <line class="axis-line" x1="56" y1="430" x2="56" y2="190" />
+  </g>
+
+  <!-- Degressiv ansteigende Graphen (f'(x) > 0, f''(x) < 0) -->
+  <g id="degressive-graphs">
+    <!-- Oberer Graph: Grün (Ziel: y = 210) -->
+    <path id="graph-green" class="graph-line curve-top" d="M 56 430 C 130 240, 270 210, 444 210" />
+    
+    <!-- Mittlerer Graph: Bernstein/Gelb (Ziel: y = 275) -->
+    <path id="graph-amber" class="graph-line curve-mid" d="M 56 430 C 140 295, 280 275, 444 275" />
+    
+    <!-- Unterer Graph: Rot (Ziel: y = 340) -->
+    <path id="graph-red" class="graph-line curve-bot" d="M 56 430 C 150 350, 290 340, 444 340" />
+  </g>
+
+  <!-- Graph-Endpunkte & Ursprungspunkt -->
+  <g id="data-nodes">
+    <circle class="origin-node" cx="56" cy="430" r="5" />
+    <circle cx="444" cy="210" r="6.5" fill="#10b981" />
+    <circle cx="444" cy="275" r="6.5" fill="#f59e0b" />
+    <circle cx="444" cy="340" r="6.5" fill="#ef4444" />
+  </g>
 </svg>

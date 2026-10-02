@@ -77,13 +77,19 @@ class RinApp:
         self.clipboard = ft.Clipboard()
         self._page.services.extend([self.geolocator, self.file_picker, self.share_service, self.clipboard])
 
-        # Root layout
+        # Root layout with SafeArea for Android status bar & bottom navigation bar / gesture insets
         self.root = ft.Column(
             expand=True,
             spacing=0,
             controls=[],
         )
-        self._page.add(self.root)
+        self.safe_area = ft.SafeArea(
+            content=self.root,
+            expand=True,
+            avoid_intrusions_top=True,
+            avoid_intrusions_bottom=True,
+        )
+        self._page.add(self.safe_area)
         self.render()
 
         # Start timer clock
@@ -544,6 +550,19 @@ class RinApp:
 
         return handler
 
+    def set_string(self, field_name: str):
+        def handler(event) -> None:
+            val = str(event.control.value).strip() if event.control.value else ""
+            setattr(self.settings, field_name, val)
+
+        return handler
+
+    def reset_api_endpoint(self, _event=None) -> None:
+        self.settings.api_endpoint = "https://rin.isv.uni-stuttgart.de/api/v1/"
+        self.store.save_settings(self.settings)
+        self._log("API-Endpunkt auf Standard-URL zurückgesetzt.")
+        self.render()
+
     def set_mode(self, event) -> None:
         self.settings.mode = event.control.value
         self.render()
@@ -557,6 +576,195 @@ class RinApp:
                 return
 
         return handler
+
+    def confirm_server_upload(self, session_id: str | None = None) -> None:
+        def on_cancel(_e):
+            self._page.pop_dialog()
+
+        async def on_confirm(_e):
+            self._page.pop_dialog()
+            if session_id:
+                target_ids = [session_id]
+            else:
+                sessions = self.store.list_sessions()
+                target_ids = [s["id"] for s in sessions]
+            if not target_ids:
+                self._log("Keine Fahrten für Server-Übertragung vorhanden.")
+                return
+            await self._execute_server_upload(target_ids)
+
+        if session_id:
+            msg_target = f"die ausgewählte Fahrt '{session_id}'"
+        else:
+            sessions = self.store.list_sessions()
+            msg_target = f"alle {len(sessions)} gespeicherten Fahrten"
+
+        endpoint_url = getattr(self.settings, "api_endpoint", "https://rin.isv.uni-stuttgart.de/api/v1/")
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, color="#10B981", size=24),
+                ft.Text("Daten an Server senden", size=18, weight=ft.FontWeight.BOLD),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Text(f"Möchtest du {msg_target} an den Forschungsserver übertragen?"),
+                        ft.Container(height=4),
+                        ft.Container(
+                            content=ft.Column([
+                                ft.Row([
+                                    ft.Icon(ft.Icons.SHIELD_ROUNDED, color="#69F0AE", size=16),
+                                    ft.Text("Anonym, geschützt & verschlüsselt", size=12, weight=ft.FontWeight.BOLD, color="#69F0AE"),
+                                ], spacing=6),
+                                ft.Text(
+                                    "Ihre Daten sind anonym, geschützt und werden verschlüsselt via HTTPS übertragen.\n\n"
+                                    "Hinweis: Es ist vollkommen in Ordnung, dieselbe Fahrt mehrfach zu senden – Duplikate werden serverseitig automatisch gefiltert.",
+                                    size=11,
+                                    color="rgba(255, 255, 255, 0.9)",
+                                ),
+                            ], spacing=4),
+                            bgcolor="rgba(16, 185, 129, 0.12)",
+                            border=ft.Border.all(1, "rgba(16, 185, 129, 0.3)"),
+                            border_radius=8,
+                            padding=10,
+                        ),
+                        ft.Container(height=4),
+                        ft.Text(f"Ziel-Endpunkt (anpassbar in Einstellungen):\n{endpoint_url}", size=11, color=COLOR_TEXT_MUTED),
+                    ],
+                    spacing=6,
+                    tight=True,
+                ),
+                width=360,
+            ),
+            actions=[
+                ft.TextButton("Abbrechen", on_click=on_cancel),
+                ft.FilledButton(
+                    content=ft.Text("Jetzt senden"),
+                    bgcolor="#10B981",
+                    color="#0d0d1a",
+                    on_click=lambda e: self._page.run_task(on_confirm, e),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._page.show_dialog(dialog)
+
+    async def _execute_server_upload(self, session_ids: list[str]) -> None:
+        total = len(session_ids)
+        prog_bar = ft.ProgressBar(value=0.0, color="#10B981", bgcolor="rgba(255,255,255,0.1)")
+        status_text = ft.Text(f"Vorbereitung: 0 von {total} gesendet...", size=12, color=COLOR_TEXT_PRIMARY)
+        detail_list = ft.Column(scroll=ft.ScrollMode.AUTO, height=130, spacing=4)
+        close_btn = ft.TextButton("Schließen", visible=False, on_click=lambda _: self._page.pop_dialog())
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.CLOUD_SYNC_ROUNDED, color="#10B981", size=22),
+                ft.Text("Übertragung an Server", size=16, weight=ft.FontWeight.BOLD),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column([
+                    status_text,
+                    prog_bar,
+                    ft.Container(height=4),
+                    detail_list,
+                ], spacing=8, tight=True),
+                width=360,
+            ),
+            actions=[close_btn],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._page.show_dialog(dialog)
+
+        success_count = 0
+        fail_count = 0
+        endpoint = getattr(self.settings, "api_endpoint", "https://rin.isv.uni-stuttgart.de/api/v1/")
+
+        for idx, sid in enumerate(session_ids, start=1):
+            status_text.value = f"Sende Fahrt {idx} von {total}: {sid}"
+            prog_bar.value = (idx - 1) / total
+            self._page.update()
+
+            points = self.store.points_for(sid)
+            if not points:
+                detail_list.controls.insert(0, ft.Text(f"• {sid}: Keine Messdaten vorhanden", size=11, color=COLOR_TEXT_MUTED))
+                continue
+
+            csv_text = self._csv_for(points)
+            ok, msg = await asyncio.to_thread(self._post_track_csv, endpoint, sid, csv_text)
+            if ok:
+                success_count += 1
+                detail_list.controls.insert(0, ft.Row([
+                    ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, color="#69F0AE", size=14),
+                    ft.Text(f"{sid}: Gesendet ({len(points)} Pkt)", size=11, color="#69F0AE"),
+                ], spacing=4))
+                self._log(f"Server-Upload {sid}: Erfolgreich ({len(points)} Punkte).")
+            else:
+                fail_count += 1
+                detail_list.controls.insert(0, ft.Row([
+                    ft.Icon(ft.Icons.ERROR_OUTLINE_ROUNDED, color=COLOR_DANGER, size=14),
+                    ft.Text(f"{sid}: {msg}", size=11, color=COLOR_DANGER),
+                ], spacing=4))
+                self._log(f"Server-Upload {sid} fehlgeschlagen: {msg}")
+
+            prog_bar.value = idx / total
+            self._page.update()
+            await asyncio.sleep(0.05)
+
+        status_text.value = f"Übertragung beendet: {success_count} erfolgreich, {fail_count} fehlgeschlagen."
+        prog_bar.value = 1.0
+        close_btn.visible = True
+        self._page.update()
+
+    @staticmethod
+    def _post_track_csv(endpoint: str, session_id: str, csv_content: str) -> tuple[bool, str]:
+        import urllib.request
+        import urllib.error
+        import ssl
+
+        target_url = endpoint.strip()
+        if not target_url.endswith("/"):
+            target_url += "/"
+
+        boundary = f"----RIN08Boundary{os.urandom(12).hex()}"
+        body = bytearray()
+
+        # Session ID field
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="session_id"\r\n\r\n{session_id}\r\n'.encode("utf-8"))
+
+        # CSV file payload
+        filename = f"rin08_{session_id}.csv"
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode("utf-8"))
+        body.extend(b"Content-Type: text/csv; charset=utf-8\r\n\r\n")
+        body.extend(csv_content.encode("utf-8"))
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+
+        req = urllib.request.Request(
+            target_url,
+            data=bytes(body),
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "RIN08-Live/1.0",
+                "X-Session-ID": session_id,
+            },
+            method="POST",
+        )
+        ctx = ssl.create_default_context()
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+                code = resp.getcode()
+                if 200 <= code < 300:
+                    return True, f"HTTP {code}"
+                return False, f"Server Status {code}"
+        except urllib.error.HTTPError as he:
+            return False, f"HTTP {he.code}: {he.reason}"
+        except Exception as ex:
+            return False, f"{type(ex).__name__}: {str(ex)[:60]}"
 
     # UI Components
     def _metric_card(self, title: str, value: str, unit: str = "", highlight: bool = False) -> ft.Container:
@@ -777,6 +985,7 @@ class RinApp:
         right_labels = []
 
         # Generate SAQ curves with rounded coordinates (2 digits after decimal)
+        # Suppress tooltips on curve lines as requested: only tracked data shows tooltips
         for index in range(5):
             points = []
             for step in range(51):
@@ -788,21 +997,26 @@ class RinApp:
                     ftc.LineChartDataPoint(
                         round(distance, 2),
                         round(min(speed, max_speed), 2),
+                        show_tooltip=False,
                     )
                 )
 
-            # Top right of graph datapoint labeled on the right side
+            # Labeled at the right end of the curve lines and slightly above it in the graph color
             end_denom = (params["a"][index] * (max_distance ** params["b"][index])) + params["c"][index]
             end_speed = round(min((1.0 / end_denom) if end_denom else 0.0, max_speed), 2)
             saq_letter = ["A", "B", "C", "D", "E"][index]
             right_labels.append(
                 ftc.ChartAxisLabel(
                     value=end_speed,
-                    label=ft.Text(
-                        f"SAQ {saq_letter}",
-                        size=9,
-                        weight=ft.FontWeight.BOLD,
-                        color=curve_colors[index],
+                    label=ft.Container(
+                        content=ft.Text(
+                            f"SAQ {saq_letter}",
+                            size=10,
+                            weight=ft.FontWeight.BOLD,
+                            color=curve_colors[index],
+                        ),
+                        offset=ft.Offset(0, -0.4),
+                        margin=ft.Margin(left=4, bottom=6, top=0, right=0),
                     ),
                 )
             )
@@ -819,23 +1033,29 @@ class RinApp:
         # Must sort right_labels strictly ascending by value to satisfy fl_chart
         right_labels.sort(key=lambda l: l.value)
 
-        # GPS trajectory with rounded coordinates
+        # GPS trajectory: display data on click only for tracked data (time rounded to min, v Luft, grade)
         points_history = self.store.points_for(self.tracker.session_id)
         if points_history:
-            trajectory = [
-                ftc.LineChartDataPoint(
-                    round(pt.straight_distance_km, 2),
-                    round(pt.straight_speed_kmh, 2),
+            trajectory = []
+            for pt in points_history:
+                dt = datetime.fromtimestamp(pt.timestamp_ms / 1000)
+                time_str = dt.strftime("%H:%M")
+                tip_text = f"{time_str}\nV-Luft: {pt.straight_speed_kmh:.1f} km/h\nSAQ {pt.saq}"
+                trajectory.append(
+                    ftc.LineChartDataPoint(
+                        round(pt.straight_distance_km, 2),
+                        round(pt.straight_speed_kmh, 2),
+                        show_tooltip=True,
+                        tooltip=tip_text,
+                    )
                 )
-                for pt in points_history
-            ]
             series.append(
                 ftc.LineChartData(
                     points=trajectory,
                     color=COLOR_CYAN,
                     stroke_width=3,
                     curved=False,
-                    point=ftc.ChartCirclePoint(radius=3, color=COLOR_CYAN),
+                    point=ftc.ChartCirclePoint(radius=3.5, color=COLOR_CYAN),
                 )
             )
 
@@ -872,6 +1092,13 @@ class RinApp:
             min_y=min_speed,
             max_y=max_speed,
             interactive=True,
+            tooltip=ftc.LineChartTooltip(
+                bgcolor="#1a1a2e",
+                border_side=ft.BorderSide(1, COLOR_CYAN),
+                border_radius=8,
+                fit_inside_horizontally=True,
+                fit_inside_vertically=True,
+            ),
             left_axis=ftc.ChartAxis(
                 labels=left_labels,
                 title=ft.Text("V-Luftlinie (km/h)", size=10, color="rgba(255,255,255,0.6)"),
@@ -903,42 +1130,44 @@ class RinApp:
         action_row = ft.Row(
             controls=[
                 ft.Button(
+                    content=ft.Row([ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, size=15), ft.Text("Daten an Server senden", size=12)]),
+                    bgcolor="#10B981",
+                    color="#0d0d1a",
+                    on_click=lambda _: self.confirm_server_upload(None),
+                ),
+                ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD, size=15), ft.Text("CSV Export", size=12)]),
                     bgcolor=COLOR_CYAN,
                     color="#0d0d1a",
                     on_click=self.download_csv,
-                    expand=True,
                 ),
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.ALL_INBOX_ROUNDED, size=15), ft.Text("CSV Alle", size=12)]),
                     bgcolor="rgba(79, 195, 247, 0.2)",
                     color=COLOR_CYAN,
                     on_click=self.download_csv_all,
-                    expand=True,
                 ),
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.SHARE_ROUNDED, size=15), ft.Text("Teilen", size=12)]),
                     bgcolor="rgba(255,255,255,0.1)",
                     color=COLOR_TEXT_PRIMARY,
                     on_click=self.share_csv,
-                    expand=True,
                 ),
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.CONTENT_COPY, size=15), ft.Text("Kopieren", size=12)]),
                     bgcolor="rgba(255,255,255,0.1)",
                     color=COLOR_TEXT_PRIMARY,
                     on_click=self.copy_csv,
-                    expand=True,
                 ),
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.VISIBILITY, size=15), ft.Text("Vorschau", size=12)]),
                     bgcolor="rgba(255,255,255,0.1)",
                     color=COLOR_TEXT_PRIMARY,
                     on_click=self.toggle_csv,
-                    expand=True,
                 ),
             ],
             spacing=6,
+            scroll=ft.ScrollMode.ADAPTIVE,
         )
 
         # Track History Section
@@ -992,6 +1221,13 @@ class RinApp:
                                 ),
                                 ft.Row(
                                     controls=[
+                                        ft.IconButton(
+                                            icon=ft.Icons.CLOUD_UPLOAD_ROUNDED,
+                                            icon_size=20,
+                                            icon_color="#10B981",
+                                            tooltip="Diese Fahrt an Server senden",
+                                            on_click=lambda _, sid=s["id"]: self.confirm_server_upload(sid),
+                                        ),
                                         ft.IconButton(
                                             icon=ft.Icons.FOLDER_OPEN_ROUNDED,
                                             icon_size=20,
@@ -1163,7 +1399,7 @@ class RinApp:
         for pt in points:
             iso_time = datetime.fromtimestamp(pt.timestamp_ms / 1000).isoformat()
             writer.writerow([
-                self.tracker.session_id or "default",
+                pt.session_id or self.tracker.session_id or "default",
                 pt.timestamp_ms,
                 iso_time,
                 f"{pt.latitude:.6f}",
@@ -1176,6 +1412,9 @@ class RinApp:
                 pt.saq,
             ])
         return output.getvalue()
+
+    def _csv_for_all(self, all_pts: list[LocationPoint]) -> str:
+        return self._csv_for(all_pts)
 
     def debug_view(self) -> ft.Column:
         pos = self.last_position
@@ -1401,9 +1640,55 @@ class RinApp:
             padding=14,
         )
 
+        api_group = ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Row([
+                        ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, size=16, color=COLOR_CYAN),
+                        ft.Text("Datenspende & Server API", size=14, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                    ], spacing=6),
+                    ft.Text(
+                        "URL für die Übertragung anonymisierter Fahrtdaten an den Forschungsserver. Standardmäßig vorkonfiguriert für das Institut für Straßen- und Verkehrswesen (ISV) der Universität Stuttgart.",
+                        size=11,
+                        color=COLOR_TEXT_MUTED,
+                    ),
+                    ft.TextField(
+                        value=str(getattr(self.settings, "api_endpoint", "https://rin.isv.uni-stuttgart.de/api/v1/")),
+                        label="Server API-Endpunkt URL",
+                        hint_text="https://rin.isv.uni-stuttgart.de/api/v1/",
+                        text_size=12,
+                        on_change=self.set_string("api_endpoint"),
+                    ),
+                    ft.Row(
+                        controls=[
+                            ft.Button(
+                                content=ft.Text("Standard wiederherstellen"),
+                                bgcolor="rgba(255, 255, 255, 0.08)",
+                                color="rgba(255, 255, 255, 0.8)",
+                                on_click=self.reset_api_endpoint,
+                            ),
+                            ft.Button(
+                                content=ft.Text("Speichern"),
+                                bgcolor=COLOR_CYAN,
+                                color="#0d0d1a",
+                                on_click=self.save_settings,
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.END,
+                        spacing=8,
+                    ),
+                ],
+                spacing=8,
+            ),
+            bgcolor=COLOR_CARD,
+            border_radius=12,
+            padding=14,
+        )
+
         return ft.Column(
             scroll=ft.ScrollMode.AUTO,
             controls=[
+                api_group,
                 filter_group,
                 chart_group,
                 saq_group,

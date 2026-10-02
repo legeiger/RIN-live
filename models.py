@@ -33,6 +33,7 @@ class Settings:
     chart_y_offset: float = 10.0
     chart_x_step: float = 10.0
     chart_y_step: float = 10.0
+    api_endpoint: str = "https://rin.isv.uni-stuttgart.de/api/v1/"
     params: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: json.loads(json.dumps(DEFAULT_PARAMS))
     )
@@ -79,18 +80,55 @@ class TripMetrics:
     moving_time_ms: int = 0
 
 
-def haversine_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
-    if None in (lat_a, lon_a, lat_b, lon_b):
+def wgs84_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculates geodesic distance in meters on the WGS-84 reference ellipsoid
+    using the high-precision Andoyer-Lambert formula (accurate to < 0.05% globally).
+    """
+    if None in (lat1, lon1, lat2, lon2):
         return 0.0
-    radius_km = 6371.0
-    lat_delta = math.radians(lat_b - lat_a)
-    lon_delta = math.radians(lon_b - lon_a)
-    value = math.sin(lat_delta / 2) ** 2 + math.cos(math.radians(lat_a)) * math.cos(math.radians(lat_b)) * math.sin(lon_delta / 2) ** 2
-    return radius_km * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+    if lat1 == lat2 and lon1 == lon2:
+        return 0.0
+
+    # WGS-84 ellipsoid constants
+    a = 6378137.0  # equatorial radius in meters
+    f = 1.0 / 298.257223563  # flattening
+
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    lam1, lam2 = math.radians(lon1), math.radians(lon2)
+
+    f_mid = (phi1 + phi2) / 2.0
+    g_mid = (phi1 - phi2) / 2.0
+    l_mid = (lam1 - lam2) / 2.0
+
+    sin_g, cos_g = math.sin(g_mid), math.cos(g_mid)
+    sin_f, cos_f = math.sin(f_mid), math.cos(f_mid)
+    sin_l, cos_l = math.sin(l_mid), math.cos(l_mid)
+
+    s_val = (sin_g * cos_l) ** 2 + (cos_f * sin_l) ** 2
+    c_val = (cos_g * cos_l) ** 2 + (sin_f * sin_l) ** 2
+
+    if s_val == 0 or c_val == 0:
+        return 0.0
+
+    omega = math.atan(math.sqrt(s_val / c_val))
+    if omega == 0:
+        return 0.0
+
+    r_val = math.sqrt(s_val * c_val) / omega
+    d_val = 2.0 * omega * a
+    h1 = (3.0 * r_val - 1.0) / (2.0 * c_val)
+    h2 = (3.0 * r_val + 1.0) / (2.0 * s_val)
+
+    dist = d_val * (1.0 + f * h1 * (sin_f * cos_g) ** 2 - f * h2 * (cos_f * sin_g) ** 2)
+    return abs(dist)
+
+
+def haversine_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
+    return calc_distance_km(lat_a, lon_a, lat_b, lon_b)
 
 
 def calc_distance_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
-    return haversine_km(lat_a, lon_a, lat_b, lon_b)
+    return wgs84_distance_m(lat_a, lon_a, lat_b, lon_b) / 1000.0
 
 
 def saq_for(distance_km: float, straight_speed_kmh: float, settings: Settings) -> tuple[int, str]:
@@ -144,6 +182,7 @@ class TripTracker:
         self.last_latitude: float | None = None
         self.last_longitude: float | None = None
         self.last_timestamp_ms = 0
+        self.last_speed_kmh = 0.0
         self.total_distance_km = 0.0
         self.straight_distance_km = 0.0
         self.current_speed_kmh = 0.0
@@ -193,6 +232,7 @@ class TripTracker:
         self.last_latitude = last.latitude
         self.last_longitude = last.longitude
         self.last_timestamp_ms = last.timestamp_ms
+        self.last_speed_kmh = last.instant_speed_kmh
         self.total_distance_km = last.total_distance_km
         self.straight_distance_km = last.straight_distance_km
         self.current_speed_kmh = last.instant_speed_kmh
@@ -233,38 +273,81 @@ class TripTracker:
 
         if actual_acc > self.settings.min_accuracy:
             return None, f"Punkt verworfen: Genauigkeit {actual_acc:.1f} m"
+
         if self.start_latitude is None:
             self.start_latitude = self.last_latitude = latitude
             self.start_longitude = self.last_longitude = longitude
             self.last_timestamp_ms = actual_ts
+            self.last_speed_kmh = 0.0
             self.window = [(latitude, longitude, actual_ts)]
             return None, "Startpunkt übernommen"
+
         elapsed_ms = actual_ts - self.last_timestamp_ms
         if elapsed_ms <= 0:
             return None, "Punkt mit ungültigem Zeitstempel verworfen"
-        step_distance = haversine_km(self.last_latitude, self.last_longitude, latitude, longitude)
-        instant_speed = step_distance / (elapsed_ms / 3_600_000)
+
+        elapsed_s = elapsed_ms / 1000.0
+        elapsed_hours = elapsed_ms / 3_600_000.0
+
+        # High-precision WGS-84 ellipsoidal distance (meters & km)
+        step_dist_m = wgs84_distance_m(self.last_latitude, self.last_longitude, latitude, longitude)
+        step_dist_km = step_dist_m / 1000.0
+        instant_speed = (step_dist_km / elapsed_hours) if elapsed_hours > 0 else 0.0
+
+        # 1. GPS Spike Rejection (Absolute Speed Limit)
         if instant_speed > self.settings.max_current_speed:
             return None, f"GPS-Spike verworfen: {instant_speed:.1f} km/h"
-        straight_distance = haversine_km(self.start_latitude, self.start_longitude, latitude, longitude)
+
+        # 2. Acceleration / Jump Rejection (Multipath GPS jump)
+        # Rejects non-physical sudden teleport jumps (> 8 m/s² acceleration at high speeds)
+        if self.last_speed_kmh > 0 and instant_speed > 25.0 and elapsed_s > 0:
+            delta_v_m_s = abs(instant_speed - self.last_speed_kmh) / 3.6
+            accel = delta_v_m_s / elapsed_s
+            if accel > 8.0:
+                return None, f"GPS-Sprung verworfen: Beschleunigung {accel:.1f} m/s²"
+
+        # 3. Stationary Deadband / Jitter Filter (Komoot / Bergfex Standard)
+        # Prevents phantom distance accumulation during stops (e.g. at traffic lights)
+        deadband_m = max(3.0, actual_acc * 0.7)
+        is_stationary_jitter = (step_dist_m < deadband_m) and (instant_speed < self.settings.moving_cutoff)
+
+        if is_stationary_jitter:
+            effective_step_km = 0.0
+            instant_speed = 0.0
+        else:
+            effective_step_km = step_dist_km
+            self.total_distance_km += effective_step_km
+            if instant_speed >= self.settings.moving_cutoff:
+                self.moving_time_ms += elapsed_ms
+
+        # 4. Straight-line distance & speed from trip start (WGS-84)
+        straight_distance = calc_distance_km(self.start_latitude, self.start_longitude, latitude, longitude)
         effective_ms = self.effective_elapsed_ms(actual_ts)
-        total_hours = effective_ms / 3_600_000
-        straight_speed = straight_distance / total_hours if total_hours > 0 else 0.0
+        total_hours = effective_ms / 3_600_000.0
+        straight_speed = (straight_distance / total_hours) if total_hours > 0 else 0.0
         if straight_speed > self.settings.max_straight_speed:
             return None, f"V-Luft-Peak verworfen: {straight_speed:.1f} km/h"
-        self.total_distance_km += step_distance
+
         self.straight_distance_km = straight_distance
         self.straight_speed_kmh = straight_speed
-        if instant_speed >= self.settings.moving_cutoff:
-            self.moving_time_ms += elapsed_ms
-        self.last_latitude, self.last_longitude = latitude, longitude
+        self.last_speed_kmh = instant_speed
+        self.last_latitude = latitude
+        self.last_longitude = longitude
         self.last_timestamp_ms = actual_ts
+
+        # 5. Moving window smoothed current speed (last 5 points)
         self.window.append((latitude, longitude, actual_ts))
         self.window = self.window[-5:]
         if len(self.window) > 1:
-            span_hours = (self.window[-1][2] - self.window[0][2]) / 3_600_000
-            travelled = sum(haversine_km(*self.window[i - 1][:2], *self.window[i][:2]) for i in range(1, len(self.window)))
-            self.current_speed_kmh = travelled / span_hours if span_hours else 0.0
+            span_hours = (self.window[-1][2] - self.window[0][2]) / 3_600_000.0
+            travelled = sum(
+                calc_distance_km(self.window[i - 1][0], self.window[i - 1][1], self.window[i][0], self.window[i][1])
+                for i in range(1, len(self.window))
+            )
+            self.current_speed_kmh = (travelled / span_hours) if span_hours > 0 else 0.0
+        else:
+            self.current_speed_kmh = instant_speed
+
         _, letter = saq_for(self.straight_distance_km, self.straight_speed_kmh, self.settings)
         point = LocationPoint(
             self.session_id or "",
