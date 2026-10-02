@@ -10,6 +10,8 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
+from geopy.distance import geodesic
+
 DEFAULT_PARAMS = {
     "PKW": {"a": [0.18, 0.21, 0.25, 0.31, 0.39], "b": [-0.676] * 5, "c": [0.0083, 0.0089, 0.0096, 0.0104, 0.0115]},
     "OEV": {"a": [0.19, 0.22, 0.26, 0.32, 0.40], "b": [-0.5] * 5, "c": [0.0031, 0.0037, 0.0044, 0.0052, 0.0063]},
@@ -82,53 +84,28 @@ class TripMetrics:
 
 def wgs84_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculates geodesic distance in meters on the WGS-84 reference ellipsoid
-    using the high-precision Andoyer-Lambert formula (accurate to < 0.05% globally).
+    using geopy (Karney's geodesic algorithm).
     """
     if None in (lat1, lon1, lat2, lon2):
         return 0.0
     if lat1 == lat2 and lon1 == lon2:
         return 0.0
+    return float(geodesic((lat1, lon1), (lat2, lon2)).meters)
 
-    # WGS-84 ellipsoid constants
-    a = 6378137.0  # equatorial radius in meters
-    f = 1.0 / 298.257223563  # flattening
 
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    lam1, lam2 = math.radians(lon1), math.radians(lon2)
-
-    f_mid = (phi1 + phi2) / 2.0
-    g_mid = (phi1 - phi2) / 2.0
-    l_mid = (lam1 - lam2) / 2.0
-
-    sin_g, cos_g = math.sin(g_mid), math.cos(g_mid)
-    sin_f, cos_f = math.sin(f_mid), math.cos(f_mid)
-    sin_l, cos_l = math.sin(l_mid), math.cos(l_mid)
-
-    s_val = (sin_g * cos_l) ** 2 + (cos_f * sin_l) ** 2
-    c_val = (cos_g * cos_l) ** 2 + (sin_f * sin_l) ** 2
-
-    if s_val == 0 or c_val == 0:
+def calc_distance_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
+    """Calculates geodesic distance in kilometers on the WGS-84 reference ellipsoid
+    using geopy (Karney's geodesic algorithm).
+    """
+    if None in (lat_a, lon_a, lat_b, lon_b):
         return 0.0
-
-    omega = math.atan(math.sqrt(s_val / c_val))
-    if omega == 0:
+    if lat_a == lat_b and lon_a == lon_b:
         return 0.0
-
-    r_val = math.sqrt(s_val * c_val) / omega
-    d_val = 2.0 * omega * a
-    h1 = (3.0 * r_val - 1.0) / (2.0 * c_val)
-    h2 = (3.0 * r_val + 1.0) / (2.0 * s_val)
-
-    dist = d_val * (1.0 + f * h1 * (sin_f * cos_g) ** 2 - f * h2 * (cos_f * sin_g) ** 2)
-    return abs(dist)
+    return float(geodesic((lat_a, lon_a), (lat_b, lon_b)).km)
 
 
 def haversine_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
     return calc_distance_km(lat_a, lon_a, lat_b, lon_b)
-
-
-def calc_distance_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
-    return wgs84_distance_m(lat_a, lon_a, lat_b, lon_b) / 1000.0
 
 
 def saq_for(distance_km: float, straight_speed_kmh: float, settings: Settings) -> tuple[int, str]:

@@ -9,7 +9,8 @@ authors = [
 dependencies = [
     "flet>=1.0.1",
     "flet-geolocator>=1.0.1",
-    "flet-charts>=1.0.1"
+    "flet-charts>=1.0.1",
+    "geopy>=2.4.0"
 ]
 
 [build-system]
