@@ -1340,7 +1340,7 @@ class RinApp:
                     content=ft.Row([ft.Icon(ft.Icons.CONTENT_COPY, size=15), ft.Text("Kopieren", size=12)]),
                     bgcolor="rgba(255,255,255,0.08)",
                     color=COLOR_TEXT_PRIMARY,
-                    on_click=self.copy_csv,
+                    on_click=lambda _: self._page.run_task(self.copy_csv),
                 ),
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.VISIBILITY, size=15), ft.Text("Vorschau", size=12)]),
@@ -1703,7 +1703,7 @@ class RinApp:
                 content=ft.Text("GPS manuell abfragen"),
                 bgcolor=COLOR_PRIMARY,
                 color="#ffffff",
-                on_click=self.fetch_location,
+                on_click=lambda _: self._page.run_task(self.fetch_location),
             ),
             ft.Text("Live Console Log", size=13, weight=ft.FontWeight.BOLD),
             ft.Container(

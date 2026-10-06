@@ -54,3 +54,7 @@ permissions = [
     "android.permission.FOREGROUND_SERVICE_LOCATION",
     "android.permission.WAKE_LOCK"
 ]
+
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni = "1.1.0"
+
