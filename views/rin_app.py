@@ -5,7 +5,7 @@ import math
 import os
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 
 import flet as ft
 import flet_charts as ftc
@@ -21,14 +21,17 @@ from models import (
     timestamp_ms,
 )
 
-# Colors matching iappyxOS theme
-COLOR_BG = "#0d0d1a"
-COLOR_CARD = "#1a1a2e"
-COLOR_HERO = "#0f3460"
-COLOR_CYAN = "#4FC3F7"
-COLOR_DANGER = "#FF6B6B"
-COLOR_TEXT_PRIMARY = "#eaeaea"
-COLOR_TEXT_MUTED = "rgba(255, 255, 255, 0.5)"
+# Classic, dignified academic engineering dark theme (non-neon)
+COLOR_BG = "#0f141c"               # Deep slate graphite
+COLOR_CARD = "#18202c"             # Solid dark slate card surface
+COLOR_HERO = "#1e293b"             # Slate navy hero container
+COLOR_PRIMARY = "#3b82d6"          # Classic university/slate blue (replaces neon cyan)
+COLOR_PRIMARY_CONTAINER = "rgba(59, 130, 214, 0.15)"
+COLOR_CYAN = COLOR_PRIMARY         # Kept as alias for compatibility
+COLOR_DANGER = "#e05252"           # Calmer soft red
+COLOR_SUCCESS = "#10b981"          # Emerald green
+COLOR_TEXT_PRIMARY = "#f1f5f9"      # Clean high-contrast off-white
+COLOR_TEXT_MUTED = "rgba(241, 245, 249, 0.6)" # Soft muted slate
 
 SAQ_COLORS = {
     "A": "#69F0AE",
@@ -36,13 +39,13 @@ SAQ_COLORS = {
     "C": "#FFF176",
     "D": "#FFB74D",
     "E": "#FF8A65",
-    "F": "#FF6B6B",
+    "F": "#e05252",
     "-": "#718096",
 }
 
 
 class RinApp:
-    """Flet UI matching iappyxOS RIN08-Live dark theme aesthetics."""
+    """Flet UI for RIN08-Live tracking and SAQ evaluation."""
 
     def __init__(self, page: ft.Page):
         self._page = page
@@ -76,6 +79,33 @@ class RinApp:
         self.share_service = ft.Share()
         self.clipboard = ft.Clipboard()
         self._page.services.extend([self.geolocator, self.file_picker, self.share_service, self.clipboard])
+
+        # Persistent view columns to preserve scroll positions across live updates
+        self.dashboard_column = ft.Column(
+            scroll=ft.ScrollMode.AUTO,
+            spacing=12,
+            controls=[],
+        )
+        self.data_column = ft.Column(
+            scroll=ft.ScrollMode.AUTO,
+            spacing=10,
+            controls=[],
+        )
+        self.debug_column = ft.Column(
+            scroll=ft.ScrollMode.AUTO,
+            spacing=10,
+            controls=[],
+        )
+        self.settings_column = ft.Column(
+            scroll=ft.ScrollMode.AUTO,
+            spacing=12,
+            controls=[],
+        )
+        self.content_container = ft.Container(
+            padding=ft.Padding.symmetric(horizontal=14, vertical=8),
+            expand=True,
+            content=self.dashboard_column,
+        )
 
         # Root layout with SafeArea for Android status bar & bottom navigation bar / gesture insets
         self.root = ft.Column(
@@ -149,6 +179,20 @@ class RinApp:
         if self.active_tab in {"dashboard", "data", "debug"}:
             self.render()
 
+    async def open_app_settings(self, _event=None) -> None:
+        try:
+            await self.geolocator.open_app_settings()
+            self._log("Android App-Einstellungen geöffnet.")
+        except Exception as err:
+            self._log(f"Konnte App-Einstellungen nicht öffnen: {err}")
+
+    async def open_location_settings(self, _event=None) -> None:
+        try:
+            await self.geolocator.open_location_settings()
+            self._log("Android Standorteinstellungen geöffnet.")
+        except Exception as err:
+            self._log(f"Konnte Standorteinstellungen nicht öffnen: {err}")
+
     def request_start_recording(self, _event=None) -> None:
         def on_cancel(_e):
             self._page.pop_dialog()
@@ -161,15 +205,15 @@ class RinApp:
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Row([
-                ft.Icon(ft.Icons.LOCATION_ON_ROUNDED, color=COLOR_CYAN, size=24),
-                ft.Text("Standortfreigabe & Akku", size=18, weight=ft.FontWeight.BOLD),
+                ft.Icon(ft.Icons.LOCATION_ON_ROUNDED, color=COLOR_PRIMARY, size=24),
+                ft.Text("Hintergrund-GPS & Akku", size=18, weight=ft.FontWeight.BOLD),
             ], spacing=8),
             content=ft.Container(
                 content=ft.Column(
                     controls=[
                         ft.Text(
-                            "RIN08-Live benötigt kontinuierlichen Zugriff auf deine GPS-Standortdaten, um Fahrten und SAQ-Qualitätsstufen auch bei gesperrtem Bildschirm oder im Hintergrund lückenlos aufzuzeichnen.",
-                            size=13,
+                            "RIN08-Live benötigt kontinuierlichen GPS-Zugriff im Hintergrund, um Verkehrsqualitätsstufen auch bei gesperrtem Smartphone lückenlos zu messen.",
+                            size=12,
                             color=COLOR_TEXT_PRIMARY,
                         ),
                         ft.Container(height=4),
@@ -178,31 +222,62 @@ class RinApp:
                                 controls=[
                                     ft.Row(
                                         controls=[
-                                            ft.Icon(ft.Icons.BATTERY_ALERT_ROUNDED, color="#FFA726", size=18),
-                                            ft.Text("Wichtig für Android-Nutzer:", size=12, weight=ft.FontWeight.BOLD, color="#FFA726"),
+                                            ft.Icon(ft.Icons.BATTERY_ALERT_ROUNDED, color="#f59e0b", size=18),
+                                            ft.Text("1. Akku-Optimierung deaktivieren:", size=12, weight=ft.FontWeight.BOLD, color="#f59e0b"),
                                         ],
                                         spacing=6,
                                     ),
                                     ft.Text(
-                                        "1. Energiesparmodus deaktivieren:\n"
-                                        "Bitte nimm RIN08-Live in den Android-Einstellungen von der Akku-Optimierung aus (auf 'Nicht eingeschränkt' setzen), damit Android die GPS-Aufzeichnung im Hintergrund nicht beendet.\n\n"
-                                        "2. Berechtigung:\n"
-                                        "Wähle bei der Systemabfrage 'Immer zulassen' (Allow all the time).",
+                                        "Android beendet Apps im Hintergrund bei Akkusparmodus. Setze unter 'Akku' die Nutzung auf 'Nicht eingeschränkt' (Unrestricted).",
+                                        size=11,
+                                        color="rgba(255, 255, 255, 0.9)",
+                                    ),
+                                    ft.Container(height=2),
+                                    ft.Button(
+                                        content=ft.Row([
+                                            ft.Icon(ft.Icons.SETTINGS_ROUNDED, size=15),
+                                            ft.Text("Android-Einstellungen öffnen", size=11, weight=ft.FontWeight.BOLD),
+                                        ], spacing=6, tight=True),
+                                        bgcolor="rgba(245, 158, 11, 0.2)",
+                                        color="#f59e0b",
+                                        on_click=lambda _: self._page.run_task(self.open_app_settings),
+                                    ),
+                                ],
+                                spacing=4,
+                            ),
+                            bgcolor="rgba(245, 158, 11, 0.12)",
+                            border=ft.Border.all(1, "rgba(245, 158, 11, 0.3)"),
+                            border_radius=8,
+                            padding=10,
+                        ),
+                        ft.Container(height=4),
+                        ft.Container(
+                            content=ft.Column(
+                                controls=[
+                                    ft.Row(
+                                        controls=[
+                                            ft.Icon(ft.Icons.SECURITY_ROUNDED, color=COLOR_PRIMARY, size=18),
+                                            ft.Text("2. Standort: 'Immer zulassen':", size=12, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                                        ],
+                                        spacing=6,
+                                    ),
+                                    ft.Text(
+                                        "Wähle bei der nachfolgenden Android-Berechtigungsabfrage unbedingt 'Immer zulassen' (Allow all the time).",
                                         size=11,
                                         color="rgba(255, 255, 255, 0.9)",
                                     ),
                                 ],
                                 spacing=4,
                             ),
-                            bgcolor="rgba(255, 167, 38, 0.12)",
-                            border=ft.Border.all(1, "rgba(255, 167, 38, 0.3)"),
+                            bgcolor="rgba(59, 130, 214, 0.12)",
+                            border=ft.Border.all(1, "rgba(59, 130, 214, 0.3)"),
                             border_radius=8,
                             padding=10,
                         ),
                         ft.Container(height=4),
                         ft.Text(
-                            "Deine Positionsdaten verbleiben ausschließlich lokal in der SQLite-Datenbank deines Geräts.",
-                            size=11,
+                            "Deine Daten verbleiben lokal auf deinem Gerät und werden nur auf Wunsch gespendet.",
+                            size=10,
                             color=COLOR_TEXT_MUTED,
                         ),
                     ],
@@ -214,9 +289,9 @@ class RinApp:
             actions=[
                 ft.TextButton("Abbrechen", on_click=on_cancel),
                 ft.FilledButton(
-                    content=ft.Text("Zustimmen & Starten"),
-                    bgcolor=COLOR_CYAN,
-                    color="#0d0d1a",
+                    content=ft.Text("Berechtigung erteilen & Starten"),
+                    bgcolor=COLOR_PRIMARY,
+                    color="#ffffff",
                     on_click=lambda e: self._page.run_task(on_consent, e),
                 ),
             ],
@@ -236,6 +311,8 @@ class RinApp:
                 self._log("Standortberechtigung wurde nicht erteilt.")
                 self.render()
                 return
+            if permission == ftg.GeolocatorPermissionStatus.WHILE_IN_USE:
+                self._log("Hinweis: Berechtigung nur 'Während der Nutzung'. Für Hintergrundaufzeichnung bitte in den App-Einstellungen auf 'Immer zulassen' stellen.")
         except Exception as perm_err:
             self._log(f"Berechtigungs-Check: {perm_err}")
 
@@ -383,39 +460,203 @@ class RinApp:
         self.csv_visible = not self.csv_visible
         self.render()
 
-    async def download_csv(self, _event=None, session_id: str | None = None) -> None:
+    def prompt_export(self, session_id: str | None = None, is_share: bool = False) -> None:
         target_id = session_id or self.tracker.session_id
         if not target_id:
-            self._log("Keine aktive Fahrt für Export ausgewählt.")
-            return
-        points = self.store.points_for(target_id)
-        if not points:
-            self._log(f"Keine Datenpunkte für {target_id} vorhanden.")
+            self.prompt_export_all(is_share=is_share)
             return
 
-        csv_text = self._csv_for(points)
-        filename = f"rin08_{target_id}.csv"
-        csv_bytes = csv_text.encode("utf-8")
+        def choose_format(fmt: str):
+            self._page.pop_dialog()
+            self._page.run_task(self.execute_export, target_id, fmt, is_share)
+
+        action_title = "Fahrt teilen" if is_share else "Fahrt exportieren"
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.SHARE_ROUNDED if is_share else ft.Icons.DOWNLOAD_ROUNDED, color=COLOR_PRIMARY, size=22),
+                ft.Text(action_title, size=17, weight=ft.FontWeight.BOLD),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Text(f"Fahrt: {target_id}", size=11, color=COLOR_TEXT_MUTED),
+                        ft.Container(height=4),
+                        ft.Text("Wähle das gewünschte Format:", size=12, weight=ft.FontWeight.W_600),
+                        ft.Container(height=6),
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.MAP_ROUNDED, color=COLOR_PRIMARY, size=24),
+                                ft.Column([
+                                    ft.Text("GPX-Datei (.gpx)", size=13, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_PRIMARY),
+                                    ft.Text("Für Komoot, Bergfex, Strava, Garmin & GPS-Geräte", size=10, color=COLOR_TEXT_MUTED),
+                                ], spacing=1, expand=True),
+                            ], spacing=10),
+                            bgcolor="rgba(255, 255, 255, 0.05)",
+                            border=ft.Border.all(1, "rgba(255, 255, 255, 0.08)"),
+                            border_radius=8,
+                            padding=10,
+                            ink=True,
+                            on_click=lambda _: choose_format("gpx"),
+                        ),
+                        ft.Container(height=4),
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.TABLE_CHART_ROUNDED, color="#10b981", size=24),
+                                ft.Column([
+                                    ft.Text("CSV-Tabelle (.csv)", size=13, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_PRIMARY),
+                                    ft.Text("Für Excel, Tabellenprogramme & RIN-08 Analyse", size=10, color=COLOR_TEXT_MUTED),
+                                ], spacing=1, expand=True),
+                            ], spacing=10),
+                            bgcolor="rgba(255, 255, 255, 0.05)",
+                            border=ft.Border.all(1, "rgba(255, 255, 255, 0.08)"),
+                            border_radius=8,
+                            padding=10,
+                            ink=True,
+                            on_click=lambda _: choose_format("csv"),
+                        ),
+                    ],
+                    tight=True,
+                    spacing=2,
+                ),
+                width=340,
+            ),
+            actions=[
+                ft.TextButton("Abbrechen", on_click=lambda _: self._page.pop_dialog()),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._page.show_dialog(dialog)
+
+    def prompt_export_all(self, is_share: bool = False) -> None:
+        def choose_format(fmt: str):
+            self._page.pop_dialog()
+            self._page.run_task(self.execute_export, None, fmt, is_share)
+
+        action_title = "Alle Fahrten teilen" if is_share else "Alle Fahrten exportieren"
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.ALL_INBOX_ROUNDED, color=COLOR_PRIMARY, size=22),
+                ft.Text(action_title, size=17, weight=ft.FontWeight.BOLD),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Text("Gesamter Verlauf aus der lokalen SQLite-Datenbank", size=11, color=COLOR_TEXT_MUTED),
+                        ft.Container(height=4),
+                        ft.Text("Wähle das Format für den Gesamtexport:", size=12, weight=ft.FontWeight.W_600),
+                        ft.Container(height=6),
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.MAP_ROUNDED, color=COLOR_PRIMARY, size=24),
+                                ft.Column([
+                                    ft.Text("GPX-Datei (.gpx)", size=13, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_PRIMARY),
+                                    ft.Text("Alle Fahrten als separate Tracks für GIS & GPS", size=10, color=COLOR_TEXT_MUTED),
+                                ], spacing=1, expand=True),
+                            ], spacing=10),
+                            bgcolor="rgba(255, 255, 255, 0.05)",
+                            border=ft.Border.all(1, "rgba(255, 255, 255, 0.08)"),
+                            border_radius=8,
+                            padding=10,
+                            ink=True,
+                            on_click=lambda _: choose_format("gpx"),
+                        ),
+                        ft.Container(height=4),
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.TABLE_CHART_ROUNDED, color="#10b981", size=24),
+                                ft.Column([
+                                    ft.Text("CSV-Tabelle (.csv)", size=13, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_PRIMARY),
+                                    ft.Text("Komplette Tabelle aller Punkte für Tabellenkalkulation", size=10, color=COLOR_TEXT_MUTED),
+                                ], spacing=1, expand=True),
+                            ], spacing=10),
+                            bgcolor="rgba(255, 255, 255, 0.05)",
+                            border=ft.Border.all(1, "rgba(255, 255, 255, 0.08)"),
+                            border_radius=8,
+                            padding=10,
+                            ink=True,
+                            on_click=lambda _: choose_format("csv"),
+                        ),
+                    ],
+                    tight=True,
+                    spacing=2,
+                ),
+                width=340,
+            ),
+            actions=[
+                ft.TextButton("Abbrechen", on_click=lambda _: self._page.pop_dialog()),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._page.show_dialog(dialog)
+
+    async def execute_export(self, session_id: str | None, fmt: str, is_share: bool = False) -> None:
+        if session_id:
+            points = self.store.points_for(session_id)
+            if not points:
+                self._log(f"Keine Datenpunkte für Fahrt {session_id} vorhanden.")
+                return
+            target_name = f"rin08_{session_id}"
+            if fmt == "gpx":
+                file_text = self._gpx_for(points, session_id)
+                ext = "gpx"
+                mime = "application/gpx+xml"
+            else:
+                file_text = self._csv_for(points)
+                ext = "csv"
+                mime = "text/csv"
+        else:
+            all_pts = self.store.all_points()
+            if not all_pts:
+                self._log("Keine Datenpunkte in Datenbank vorhanden.")
+                return
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            target_name = f"rin08_all_tracks_{stamp}"
+            if fmt == "gpx":
+                file_text = self._gpx_for_all(all_pts)
+                ext = "gpx"
+                mime = "application/gpx+xml"
+            else:
+                file_text = self._csv_for_all(all_pts)
+                ext = "csv"
+                mime = "text/csv"
+
+        filename = f"{target_name}.{ext}"
+        data_bytes = file_text.encode("utf-8")
+
+        if is_share:
+            try:
+                share_file = ft.ShareFile.from_bytes(data_bytes, mime_type=mime, name=filename)
+                await self.share_service.share_files(
+                    [share_file],
+                    title=f"RIN08 {ext.upper()} teilen",
+                    text=f"RIN08 Datenexport ({filename})",
+                )
+                self._log(f"Teilen-Menü geöffnet für {filename}")
+            except Exception as err:
+                self._log(f"Teilen fehlgeschlagen: {err}")
+            return
 
         # 1. Local copy in exports/ directory
         try:
             os.makedirs("exports", exist_ok=True)
             local_path = os.path.join("exports", filename)
             with open(local_path, "w", encoding="utf-8") as f:
-                f.write(csv_text)
+                f.write(file_text)
             self._log(f"Lokale Kopie: {filename}")
         except Exception as err:
-            self._log(f"Lokales CSV Speichern: {err}")
+            self._log(f"Lokales Speichern: {err}")
 
-        # 2. Native File Picker (Opens Android Storage Access Framework file chooser / Desktop Save dialog)
+        # 2. Native File Picker (Opens Android Storage Access Framework / Desktop Save dialog)
         picker_saved = False
         try:
             saved_path = await self.file_picker.save_file(
-                dialog_title="CSV-Datei speichern",
+                dialog_title=f"{ext.upper()}-Datei speichern",
                 file_name=filename,
-                src_bytes=csv_bytes,
+                src_bytes=data_bytes,
                 file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["csv"],
+                allowed_extensions=[ext],
             )
             if saved_path:
                 self._log(f"Datei erfolgreich exportiert: {saved_path}")
@@ -426,93 +667,24 @@ class RinApp:
         except Exception as err:
             self._log(f"Dateiauswahl: {err}")
 
-        # 3. Fallback: Browser download (Data URI) if on web and file picker not used
+        # 3. Fallback: Browser download (Data URI) if on web
         if not picker_saved and getattr(self._page, "web", False):
             try:
-                encoded = urllib.parse.quote(csv_text)
-                data_uri = f"data:text/csv;charset=utf-8,{encoded}"
+                encoded = urllib.parse.quote(file_text)
+                data_uri = f"data:{mime};charset=utf-8,{encoded}"
                 self._page.launch_url(data_uri)
-                self._log(f"Browser-Download angestoßen ({len(points)} Pkt)")
+                self._log(f"Browser-Download angestoßen ({filename})")
             except Exception as err:
                 self._log(f"Download-Fehler: {err}")
+
+    async def download_csv(self, _event=None, session_id: str | None = None) -> None:
+        self.prompt_export(session_id=session_id, is_share=False)
 
     async def download_csv_all(self, _event=None) -> None:
-        all_pts = self.store.all_points()
-        if not all_pts:
-            self._log("Keine Datenpunkte in Datenbank vorhanden.")
-            return
-
-        csv_text = self._csv_for_all(all_pts)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"rin08_all_tracks_{stamp}.csv"
-        csv_bytes = csv_text.encode("utf-8")
-
-        # 1. Local copy in exports/ directory
-        try:
-            os.makedirs("exports", exist_ok=True)
-            local_path = os.path.join("exports", filename)
-            with open(local_path, "w", encoding="utf-8") as f:
-                f.write(csv_text)
-            self._log(f"Lokale Kopie: {filename}")
-        except Exception as err:
-            self._log(f"Lokales CSV Speichern: {err}")
-
-        # 2. Native File Picker
-        picker_saved = False
-        try:
-            saved_path = await self.file_picker.save_file(
-                dialog_title="Alle Fahrten als CSV speichern",
-                file_name=filename,
-                src_bytes=csv_bytes,
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["csv"],
-            )
-            if saved_path:
-                self._log(f"Gesamtexport gespeichert: {saved_path}")
-                picker_saved = True
-            else:
-                self._log("Dateiauswahl abgebrochen.")
-                return
-        except Exception as err:
-            self._log(f"Dateiauswahl: {err}")
-
-        # 3. Fallback: Browser download (Data URI)
-        if not picker_saved and getattr(self._page, "web", False):
-            try:
-                encoded = urllib.parse.quote(csv_text)
-                data_uri = f"data:text/csv;charset=utf-8,{encoded}"
-                self._page.launch_url(data_uri)
-                self._log(f"Browser-Download angestoßen ({len(all_pts)} Pkt)")
-            except Exception as err:
-                self._log(f"Download-Fehler: {err}")
+        self.prompt_export_all(is_share=False)
 
     async def share_csv(self, _event=None, session_id: str | None = None) -> None:
-        target_id = session_id or self.tracker.session_id
-        if target_id:
-            points = self.store.points_for(target_id)
-            filename = f"rin08_{target_id}.csv"
-            csv_text = self._csv_for(points)
-        else:
-            points = self.store.all_points()
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"rin08_all_tracks_{stamp}.csv"
-            csv_text = self._csv_for_all(points)
-
-        if not points:
-            self._log("Keine Datenpunkte zum Teilen vorhanden.")
-            return
-
-        csv_bytes = csv_text.encode("utf-8")
-        try:
-            share_file = ft.ShareFile.from_bytes(csv_bytes, mime_type="text/csv", name=filename)
-            await self.share_service.share_files(
-                [share_file],
-                title="RIN08 CSV teilen",
-                text=f"RIN08 Datenexport ({filename})",
-            )
-            self._log(f"Teilen-Menü geöffnet für {filename}")
-        except Exception as err:
-            self._log(f"Teilen fehlgeschlagen: {err}")
+        self.prompt_export(session_id=session_id, is_share=True)
 
     async def copy_csv(self, _event=None) -> None:
         points = self.store.points_for(self.tracker.session_id)
@@ -610,17 +782,17 @@ class RinApp:
             content=ft.Container(
                 content=ft.Column(
                     controls=[
-                        ft.Text(f"Möchtest du {msg_target} an den Forschungsserver übertragen?"),
+                        ft.Text(f"Möchtest du {msg_target} an den Server übertragen?"),
                         ft.Container(height=4),
                         ft.Container(
                             content=ft.Column([
                                 ft.Row([
                                     ft.Icon(ft.Icons.SHIELD_ROUNDED, color="#69F0AE", size=16),
-                                    ft.Text("Anonym, geschützt & verschlüsselt", size=12, weight=ft.FontWeight.BOLD, color="#69F0AE"),
+                                    ft.Text("Anonym & verschlüsselt", size=12, weight=ft.FontWeight.BOLD, color="#69F0AE"),
                                 ], spacing=6),
                                 ft.Text(
-                                    "Ihre Daten sind anonym, geschützt und werden verschlüsselt via HTTPS übertragen.\n\n"
-                                    "Hinweis: Es ist vollkommen in Ordnung, dieselbe Fahrt mehrfach zu senden – Duplikate werden serverseitig automatisch gefiltert.",
+                                    "Ihre Daten werden anonym und verschlüsselt via HTTPS übertragen.\n"
+                                    "Hinweis: Es ist in Ordnung, dieselbe Fahrt mehrfach zu übermitteln. Duplikate werden serverseitig gefiltert.",
                                     size=11,
                                     color="rgba(255, 255, 255, 0.9)",
                                 ),
@@ -631,7 +803,7 @@ class RinApp:
                             padding=10,
                         ),
                         ft.Container(height=4),
-                        ft.Text(f"Ziel-Endpunkt (anpassbar in Einstellungen):\n{endpoint_url}", size=11, color=COLOR_TEXT_MUTED),
+                        ft.Text(f"Ziel-Endpunkt:\n{endpoint_url}", size=11, color=COLOR_TEXT_MUTED),
                     ],
                     spacing=6,
                     tight=True,
@@ -768,19 +940,33 @@ class RinApp:
 
     # UI Components
     def _metric_card(self, title: str, value: str, unit: str = "", highlight: bool = False) -> ft.Container:
+        spans = [
+            ft.TextSpan(
+                text=value,
+                style=ft.TextStyle(
+                    size=22,
+                    weight=ft.FontWeight.BOLD,
+                    color=COLOR_PRIMARY if highlight else COLOR_TEXT_PRIMARY,
+                ),
+            ),
+        ]
+        if unit:
+            spans.append(
+                ft.TextSpan(
+                    text=f" {unit}",
+                    style=ft.TextStyle(
+                        size=11,
+                        weight=ft.FontWeight.NORMAL,
+                        color=COLOR_TEXT_MUTED,
+                    ),
+                )
+            )
+
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text(title, size=10, weight=ft.FontWeight.BOLD, color="rgba(255,255,255,0.5)"),
-                    ft.Row(
-                        controls=[
-                            ft.Text(value, size=24, weight=ft.FontWeight.BOLD, color=COLOR_CYAN if highlight else COLOR_TEXT_PRIMARY),
-                            ft.Text(unit, size=11, color="rgba(255,255,255,0.4)") if unit else ft.Container(),
-                        ],
-                        alignment=ft.MainAxisAlignment.START,
-                        vertical_alignment=ft.CrossAxisAlignment.END,
-                        spacing=4,
-                    ),
+                    ft.Text(title, size=10, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_MUTED),
+                    ft.Text(spans=spans),
                 ],
                 spacing=4,
             ),
@@ -788,7 +974,7 @@ class RinApp:
             border_radius=10,
             padding=ft.Padding.symmetric(horizontal=14, vertical=12),
             expand=True,
-            border=ft.Border.all(1, "rgba(255,255,255,0.03)"),
+            border=ft.Border.all(1, "rgba(255,255,255,0.05)"),
         )
 
     def _tab_button(self, label: str, tab: str) -> ft.Control:
@@ -798,9 +984,9 @@ class RinApp:
                 label,
                 size=12,
                 weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL,
-                color="#0d0d1a" if is_active else "rgba(255,255,255,0.7)",
+                color="#ffffff" if is_active else "rgba(255,255,255,0.7)",
             ),
-            bgcolor=COLOR_CYAN if is_active else "rgba(255,255,255,0.06)",
+            bgcolor=COLOR_PRIMARY if is_active else "rgba(255,255,255,0.06)",
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=8),
                 padding=ft.Padding.symmetric(vertical=8, horizontal=8),
@@ -843,7 +1029,7 @@ class RinApp:
                 st_label = "PAUSIERT"
                 st_icon = ft.Icons.PAUSE_CIRCLE_FILLED
             else:
-                st_color = COLOR_CYAN
+                st_color = COLOR_PRIMARY
                 st_label = "GELADENE FAHRT"
                 st_icon = ft.Icons.FOLDER_OPEN_ROUNDED
 
@@ -891,7 +1077,7 @@ class RinApp:
                 spacing=2,
             ),
             bgcolor=COLOR_HERO,
-            border=ft.Border.all(1, "rgba(79, 195, 247, 0.4)"),
+            border=ft.Border.all(1, "rgba(59, 130, 214, 0.35)"),
             border_radius=12,
             padding=ft.Padding.symmetric(vertical=14, horizontal=16),
             alignment=ft.Alignment.CENTER,
@@ -945,11 +1131,8 @@ class RinApp:
             ft.Container(height=8),
         ])
 
-        return ft.Column(
-            scroll=ft.ScrollMode.AUTO,
-            spacing=12,
-            controls=dash_controls,
-        )
+        self.dashboard_column.controls = dash_controls
+        return self.dashboard_column
 
     def _chart(self) -> ftc.LineChart:
         metrics = self.tracker.metrics
@@ -1052,10 +1235,10 @@ class RinApp:
             series.append(
                 ftc.LineChartData(
                     points=trajectory,
-                    color=COLOR_CYAN,
+                    color=COLOR_PRIMARY,
                     stroke_width=3,
                     curved=False,
-                    point=ftc.ChartCirclePoint(radius=3.5, color=COLOR_CYAN),
+                    point=ftc.ChartCirclePoint(radius=3.5, color=COLOR_PRIMARY),
                 )
             )
 
@@ -1094,7 +1277,7 @@ class RinApp:
             interactive=True,
             tooltip=ftc.LineChartTooltip(
                 bgcolor="#1a1a2e",
-                border_side=ft.BorderSide(1, COLOR_CYAN),
+                border_side=ft.BorderSide(1, COLOR_PRIMARY),
                 border_radius=8,
                 fit_inside_horizontally=True,
                 fit_inside_vertically=True,
@@ -1132,36 +1315,36 @@ class RinApp:
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, size=15), ft.Text("Daten an Server senden", size=12)]),
                     bgcolor="#10B981",
-                    color="#0d0d1a",
+                    color="#ffffff",
                     on_click=lambda _: self.confirm_server_upload(None),
                 ),
                 ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD, size=15), ft.Text("CSV Export", size=12)]),
-                    bgcolor=COLOR_CYAN,
-                    color="#0d0d1a",
-                    on_click=self.download_csv,
+                    content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD_ROUNDED, size=15), ft.Text("Exportieren", size=12)]),
+                    bgcolor=COLOR_PRIMARY,
+                    color="#ffffff",
+                    on_click=lambda _: self.prompt_export(None, is_share=False),
                 ),
                 ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.ALL_INBOX_ROUNDED, size=15), ft.Text("CSV Alle", size=12)]),
-                    bgcolor="rgba(79, 195, 247, 0.2)",
-                    color=COLOR_CYAN,
-                    on_click=self.download_csv_all,
+                    content=ft.Row([ft.Icon(ft.Icons.ALL_INBOX_ROUNDED, size=15), ft.Text("Alle exportieren", size=12)]),
+                    bgcolor="rgba(59, 130, 214, 0.2)",
+                    color=COLOR_PRIMARY,
+                    on_click=lambda _: self.prompt_export_all(is_share=False),
                 ),
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.SHARE_ROUNDED, size=15), ft.Text("Teilen", size=12)]),
-                    bgcolor="rgba(255,255,255,0.1)",
+                    bgcolor="rgba(255,255,255,0.08)",
                     color=COLOR_TEXT_PRIMARY,
-                    on_click=self.share_csv,
+                    on_click=lambda _: self.prompt_export(None, is_share=True),
                 ),
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.CONTENT_COPY, size=15), ft.Text("Kopieren", size=12)]),
-                    bgcolor="rgba(255,255,255,0.1)",
+                    bgcolor="rgba(255,255,255,0.08)",
                     color=COLOR_TEXT_PRIMARY,
                     on_click=self.copy_csv,
                 ),
                 ft.Button(
                     content=ft.Row([ft.Icon(ft.Icons.VISIBILITY, size=15), ft.Text("Vorschau", size=12)]),
-                    bgcolor="rgba(255,255,255,0.1)",
+                    bgcolor="rgba(255,255,255,0.08)",
                     color=COLOR_TEXT_PRIMARY,
                     on_click=self.toggle_csv,
                 ),
@@ -1194,8 +1377,8 @@ class RinApp:
                                             controls=[
                                                 ft.Text(stamp_str, size=12, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_PRIMARY),
                                                 ft.Container(
-                                                    content=ft.Text("AKTIV", size=9, weight=ft.FontWeight.BOLD, color="#0d0d1a"),
-                                                    bgcolor=COLOR_CYAN,
+                                                    content=ft.Text("AKTIV", size=9, weight=ft.FontWeight.BOLD, color="#ffffff"),
+                                                    bgcolor=COLOR_PRIMARY,
                                                     border_radius=4,
                                                     padding=ft.Padding.symmetric(horizontal=6, vertical=1),
                                                 ) if is_active else ft.Container(),
@@ -1205,7 +1388,7 @@ class RinApp:
                                         ft.Text(f"ID: {s['id']}", size=10, color=COLOR_TEXT_MUTED),
                                         ft.Row(
                                             controls=[
-                                                ft.Text(f"{s['total_distance_km']:.2f} km", size=11, weight=ft.FontWeight.W_600, color=COLOR_CYAN),
+                                                ft.Text(f"{s['total_distance_km']:.2f} km", size=11, weight=ft.FontWeight.W_600, color=COLOR_PRIMARY),
                                                 ft.Text("·", size=11, color=COLOR_TEXT_MUTED),
                                                 ft.Text(f"Luft: {s['straight_distance_km']:.2f} km", size=11, color=COLOR_TEXT_PRIMARY),
                                                 ft.Text("·", size=11, color=COLOR_TEXT_MUTED),
@@ -1218,6 +1401,7 @@ class RinApp:
                                     ],
                                     spacing=2,
                                     expand=True,
+                                    tight=True,
                                 ),
                                 ft.Row(
                                     controls=[
@@ -1231,7 +1415,7 @@ class RinApp:
                                         ft.IconButton(
                                             icon=ft.Icons.FOLDER_OPEN_ROUNDED,
                                             icon_size=20,
-                                            icon_color=COLOR_CYAN,
+                                            icon_color=COLOR_PRIMARY,
                                             tooltip="Diese Fahrt im Dashboard öffnen",
                                             on_click=lambda _, sid=s["id"]: self.open_session(sid),
                                         ),
@@ -1239,15 +1423,15 @@ class RinApp:
                                             icon=ft.Icons.DOWNLOAD_ROUNDED,
                                             icon_size=20,
                                             icon_color="rgba(255,255,255,0.7)",
-                                            tooltip="CSV dieser Fahrt im Datei-Manager speichern",
-                                            on_click=lambda _, sid=s["id"]: self._page.run_task(self.download_csv, session_id=sid),
+                                            tooltip="Fahrt exportieren (GPX oder CSV)",
+                                            on_click=lambda _, sid=s["id"]: self.prompt_export(sid, is_share=False),
                                         ),
                                         ft.IconButton(
                                             icon=ft.Icons.SHARE_ROUNDED,
                                             icon_size=20,
                                             icon_color="rgba(255,255,255,0.7)",
-                                            tooltip="CSV dieser Fahrt teilen",
-                                            on_click=lambda _, sid=s["id"]: self._page.run_task(self.share_csv, session_id=sid),
+                                            tooltip="Fahrt teilen (GPX oder CSV)",
+                                            on_click=lambda _, sid=s["id"]: self.prompt_export(sid, is_share=True),
                                         ),
                                         ft.IconButton(
                                             icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
@@ -1263,10 +1447,10 @@ class RinApp:
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        bgcolor="rgba(79, 195, 247, 0.08)" if is_active else "rgba(255, 255, 255, 0.03)",
+                        bgcolor="rgba(59, 130, 214, 0.08)" if is_active else "rgba(255, 255, 255, 0.03)",
                         border_radius=8,
                         padding=ft.Padding.symmetric(horizontal=10, vertical=8),
-                        border=ft.Border.all(1, COLOR_CYAN if is_active else "rgba(255, 255, 255, 0.05)"),
+                        border=ft.Border.all(1, COLOR_PRIMARY if is_active else "rgba(255, 255, 255, 0.05)"),
                     )
                 )
 
@@ -1275,8 +1459,8 @@ class RinApp:
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.HISTORY_ROUNDED, size=16, color=COLOR_CYAN),
-                            ft.Text(f"Fahrten-Historie ({len(sessions)})", size=13, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                            ft.Icon(ft.Icons.HISTORY_ROUNDED, size=16, color=COLOR_PRIMARY),
+                            ft.Text(f"Fahrten-Historie ({len(sessions)})", size=13, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                         ],
                         spacing=6,
                     ),
@@ -1346,8 +1530,8 @@ class RinApp:
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.LIST_ALT_ROUNDED, size=16, color=COLOR_CYAN),
-                            ft.Text(f"Datenpunkte ({self.tracker.session_id or 'Keine Fahrt'}: {len(points)} Pkt)", size=13, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                            ft.Icon(ft.Icons.LIST_ALT_ROUNDED, size=16, color=COLOR_PRIMARY),
+                            ft.Text(f"Datenpunkte ({self.tracker.session_id or 'Keine Fahrt'}: {len(points)} Pkt)", size=13, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                         ],
                         spacing=6,
                     ),
@@ -1386,7 +1570,8 @@ class RinApp:
             )
         )
 
-        return ft.Column(controls=controls, expand=True, spacing=10)
+        self.data_column.controls = controls
+        return self.data_column
 
     def _csv_for(self, points: list[LocationPoint]) -> str:
         output = io.StringIO()
@@ -1416,6 +1601,83 @@ class RinApp:
     def _csv_for_all(self, all_pts: list[LocationPoint]) -> str:
         return self._csv_for(all_pts)
 
+    def _gpx_for(self, points: list[LocationPoint], session_id: str | None = None) -> str:
+        trk_name = session_id or (points[0].session_id if points else "RIN08_Track")
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<gpx version="1.1" creator="RIN08-Live - ISV Universitaet Stuttgart"',
+            '     xmlns="http://www.topografix.com/GPX/1/1"',
+            '     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"',
+            '     xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">',
+            '  <metadata>',
+            f'    <name>RIN08-Live Fahrt {trk_name}</name>',
+            f'    <time>{now_iso}</time>',
+            '  </metadata>',
+            '  <trk>',
+            f'    <name>{trk_name}</name>',
+            '    <trkseg>',
+        ]
+        for pt in points:
+            pt_iso = datetime.fromtimestamp(pt.timestamp_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            speed_ms = max(0.0, pt.instant_speed_kmh / 3.6)
+            lines.append(f'      <trkpt lat="{pt.latitude:.6f}" lon="{pt.longitude:.6f}">')
+            lines.append(f'        <time>{pt_iso}</time>')
+            lines.append(f'        <speed>{speed_ms:.2f}</speed>')
+            lines.append('        <extensions>')
+            lines.append(f'          <v_aktuell_kmh>{pt.instant_speed_kmh:.1f}</v_aktuell_kmh>')
+            lines.append(f'          <v_luftlinie_kmh>{pt.straight_speed_kmh:.1f}</v_luftlinie_kmh>')
+            lines.append(f'          <luftlinie_km>{pt.straight_distance_km:.3f}</luftlinie_km>')
+            lines.append(f'          <fahrtdistanz_km>{pt.total_distance_km:.3f}</fahrtdistanz_km>')
+            lines.append(f'          <saq>{pt.saq}</saq>')
+            lines.append('        </extensions>')
+            lines.append('      </trkpt>')
+        lines.append('    </trkseg>')
+        lines.append('  </trk>')
+        lines.append('</gpx>')
+        return "\n".join(lines)
+
+    def _gpx_for_all(self, all_pts: list[LocationPoint]) -> str:
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<gpx version="1.1" creator="RIN08-Live - ISV Universitaet Stuttgart"',
+            '     xmlns="http://www.topografix.com/GPX/1/1"',
+            '     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"',
+            '     xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">',
+            '  <metadata>',
+            '    <name>RIN08-Live Gesamtexport</name>',
+            f'    <time>{now_iso}</time>',
+            '  </metadata>',
+        ]
+        groups: dict[str, list[LocationPoint]] = {}
+        for pt in all_pts:
+            sid = pt.session_id or "default"
+            groups.setdefault(sid, []).append(pt)
+
+        for sid, pts in groups.items():
+            lines.append('  <trk>')
+            lines.append(f'    <name>{sid}</name>')
+            lines.append('    <trkseg>')
+            for pt in pts:
+                pt_iso = datetime.fromtimestamp(pt.timestamp_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                speed_ms = max(0.0, pt.instant_speed_kmh / 3.6)
+                lines.append(f'      <trkpt lat="{pt.latitude:.6f}" lon="{pt.longitude:.6f}">')
+                lines.append(f'        <time>{pt_iso}</time>')
+                lines.append(f'        <speed>{speed_ms:.2f}</speed>')
+                lines.append('        <extensions>')
+                lines.append(f'          <v_aktuell_kmh>{pt.instant_speed_kmh:.1f}</v_aktuell_kmh>')
+                lines.append(f'          <v_luftlinie_kmh>{pt.straight_speed_kmh:.1f}</v_luftlinie_kmh>')
+                lines.append(f'          <luftlinie_km>{pt.straight_distance_km:.3f}</luftlinie_km>')
+                lines.append(f'          <fahrtdistanz_km>{pt.total_distance_km:.3f}</fahrtdistanz_km>')
+                lines.append(f'          <saq>{pt.saq}</saq>')
+                lines.append('        </extensions>')
+                lines.append('      </trkpt>')
+            lines.append('    </trkseg>')
+            lines.append('  </trk>')
+        lines.append('</gpx>')
+        return "\n".join(lines)
+
     def debug_view(self) -> ft.Column:
         pos = self.last_position
         if pos:
@@ -1423,46 +1685,43 @@ class RinApp:
         else:
             loc_info = "Warte auf GPS-Signal..."
 
-        return ft.Column(
-            controls=[
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Row([ft.Text("Status:", weight=ft.FontWeight.BOLD), ft.Text("RECORDING" if self.recording else "INAKTIV", color=COLOR_DANGER if self.recording else COLOR_CYAN)]),
-                            ft.Row([ft.Text("GPS Signal:", weight=ft.FontWeight.BOLD), ft.Text(loc_info, size=12)]),
-                            ft.Row([ft.Text("Intervall / Genauigkeit:", weight=ft.FontWeight.BOLD), ft.Text(f"{self.settings.gps_interval} s / < {self.settings.min_accuracy} m", size=12)]),
-                        ],
-                        spacing=6,
-                    ),
-                    bgcolor=COLOR_CARD,
-                    border_radius=10,
-                    padding=14,
+        self.debug_column.controls = [
+            ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Row([ft.Text("Status:", weight=ft.FontWeight.BOLD), ft.Text("RECORDING" if self.recording else "INAKTIV", color=COLOR_DANGER if self.recording else COLOR_PRIMARY)]),
+                        ft.Row([ft.Text("GPS Signal:", weight=ft.FontWeight.BOLD), ft.Text(loc_info, size=12)]),
+                        ft.Row([ft.Text("Intervall / Genauigkeit:", weight=ft.FontWeight.BOLD), ft.Text(f"{self.settings.gps_interval} s / < {self.settings.min_accuracy} m", size=12)]),
+                    ],
+                    spacing=6,
                 ),
-                ft.Button(
-                    content=ft.Text("GPS manuell abfragen"),
-                    bgcolor=COLOR_CYAN,
-                    color="#0d0d1a",
-                    on_click=self.fetch_location,
-                ),
-                ft.Text("Live Console Log", size=13, weight=ft.FontWeight.BOLD),
-                ft.Container(
-                    content=ft.Text("\n".join(self.logs), size=11, color="#69F0AE", selectable=True),
-                    bgcolor="rgba(0,0,0,0.5)",
-                    border_radius=8,
-                    padding=12,
-                    border=ft.Border.all(1, "rgba(255,255,255,0.08)"),
-                    expand=True,
-                ),
-            ],
-            expand=True,
-            spacing=10,
-        )
+                bgcolor=COLOR_CARD,
+                border_radius=10,
+                padding=14,
+            ),
+            ft.Button(
+                content=ft.Text("GPS manuell abfragen"),
+                bgcolor=COLOR_PRIMARY,
+                color="#ffffff",
+                on_click=self.fetch_location,
+            ),
+            ft.Text("Live Console Log", size=13, weight=ft.FontWeight.BOLD),
+            ft.Container(
+                content=ft.Text("\n".join(self.logs), size=11, color="#69F0AE", selectable=True),
+                bgcolor="rgba(0,0,0,0.5)",
+                border_radius=8,
+                padding=12,
+                border=ft.Border.all(1, "rgba(255,255,255,0.08)"),
+                expand=True,
+            ),
+        ]
+        return self.debug_column
 
     def settings_view(self) -> ft.Column:
         filter_group = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Filter & Evaluierung", size=14, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                    ft.Text("Filter & Evaluierung", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                     ft.Row(
                         controls=[
                             ft.Text("Bewertungsmodus", size=13, expand=True),
@@ -1470,9 +1729,9 @@ class RinApp:
                                 value=self.settings.mode,
                                 width=120,
                                 options=[
+                                    ft.DropdownOption(key="IOE", text="IÖ"),
                                     ft.DropdownOption(key="PKW", text="PKW"),
                                     ft.DropdownOption(key="OEV", text="ÖV"),
-                                    ft.DropdownOption(key="IOE", text="IÖ"),
                                 ],
                                 on_select=self.set_mode,
                             ),
@@ -1553,7 +1812,7 @@ class RinApp:
         saq_group = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("SAQ Parameter (Kurven)", size=14, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                    ft.Text("SAQ Parameter (Kurven)", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                     *param_rows,
                     ft.Container(height=6),
                     ft.Row(
@@ -1567,8 +1826,8 @@ class RinApp:
                             ),
                             ft.Button(
                                 content=ft.Text("Speichern"),
-                                bgcolor=COLOR_CYAN,
-                                color="#0d0d1a",
+                                bgcolor=COLOR_PRIMARY,
+                                color="#ffffff",
                                 on_click=self.save_settings,
                                 expand=True,
                             ),
@@ -1586,7 +1845,7 @@ class RinApp:
         chart_group = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Diagramm Einstellungen (Bounds & Offset)", size=14, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                    ft.Text("Diagramm Einstellungen (Bounds & Offset)", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                     ft.Row(
                         controls=[
                             ft.Text("Standard X-Max (Luftlinie km)", size=13, expand=True),
@@ -1640,15 +1899,59 @@ class RinApp:
             padding=14,
         )
 
+        permissions_group = ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Row([
+                        ft.Icon(ft.Icons.SECURITY_ROUNDED, size=16, color=COLOR_PRIMARY),
+                        ft.Text("Android System-Berechtigungen & Akku", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                    ], spacing=6),
+                    ft.Text(
+                        "Für zuverlässige Messungen im Hintergrund bei gesperrtem Bildschirm müssen der Standort auf 'Immer zulassen' und die Akku-Nutzung auf 'Nicht eingeschränkt' gesetzt sein.",
+                        size=11,
+                        color=COLOR_TEXT_MUTED,
+                    ),
+                    ft.Row(
+                        controls=[
+                            ft.Button(
+                                content=ft.Row([
+                                    ft.Icon(ft.Icons.BATTERY_ALERT_ROUNDED, size=15),
+                                    ft.Text("App-Einstellungen (Akku)", size=11, weight=ft.FontWeight.BOLD),
+                                ], spacing=6, tight=True),
+                                bgcolor="rgba(245, 158, 11, 0.15)",
+                                color="#f59e0b",
+                                on_click=lambda _: self._page.run_task(self.open_app_settings),
+                            ),
+                            ft.Button(
+                                content=ft.Row([
+                                    ft.Icon(ft.Icons.LOCATION_ON_ROUNDED, size=15),
+                                    ft.Text("Standort-Einstellungen", size=11, weight=ft.FontWeight.BOLD),
+                                ], spacing=6, tight=True),
+                                bgcolor="rgba(59, 130, 214, 0.15)",
+                                color=COLOR_PRIMARY,
+                                on_click=lambda _: self._page.run_task(self.open_location_settings),
+                            ),
+                        ],
+                        spacing=8,
+                        wrap=True,
+                    ),
+                ],
+                spacing=8,
+            ),
+            bgcolor=COLOR_CARD,
+            border_radius=12,
+            padding=14,
+        )
+
         api_group = ft.Container(
             content=ft.Column(
                 controls=[
                     ft.Row([
-                        ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, size=16, color=COLOR_CYAN),
-                        ft.Text("Datenspende & Server API", size=14, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                        ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, size=16, color=COLOR_PRIMARY),
+                        ft.Text("Datenspende", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                     ], spacing=6),
                     ft.Text(
-                        "URL für die Übertragung anonymisierter Fahrtdaten an den Forschungsserver. Standardmäßig vorkonfiguriert für das Institut für Straßen- und Verkehrswesen (ISV) der Universität Stuttgart.",
+                        "API-Endpoint für die Übertragung anonymisierter Fahrtdaten. Standardmäßig ist der Server des Institut für Straßen- und Verkehrswesen (ISV) der Universität Stuttgart voreingestellt.",
                         size=11,
                         color=COLOR_TEXT_MUTED,
                     ),
@@ -1669,8 +1972,8 @@ class RinApp:
                             ),
                             ft.Button(
                                 content=ft.Text("Speichern"),
-                                bgcolor=COLOR_CYAN,
-                                color="#0d0d1a",
+                                bgcolor=COLOR_PRIMARY,
+                                color="#ffffff",
                                 on_click=self.save_settings,
                             ),
                         ],
@@ -1685,17 +1988,15 @@ class RinApp:
             padding=14,
         )
 
-        return ft.Column(
-            scroll=ft.ScrollMode.AUTO,
-            controls=[
-                api_group,
-                filter_group,
-                chart_group,
-                saq_group,
-                ft.Container(height=10),
-            ],
-            spacing=12,
-        )
+        self.settings_column.controls = [
+            filter_group,
+            chart_group,
+            saq_group,
+            permissions_group,
+            api_group,
+            ft.Container(height=10),
+        ]
+        return self.settings_column
 
     def render(self) -> None:
         views = {
@@ -1705,11 +2006,12 @@ class RinApp:
             "settings": self.settings_view,
         }
         content = views[self.active_tab]()
+        self.content_container.content = content
 
         header_bar = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("RIN08-Live", size=20, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                    ft.Text("RIN08-Live", size=20, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                     ft.Row(
                         controls=[
                             self._tab_button("Dashboard", "dashboard"),
@@ -1733,15 +2035,15 @@ class RinApp:
                     ft.IconButton(
                         icon=ft.Icons.PLAY_ARROW_ROUNDED,
                         icon_size=36,
-                        icon_color="#0d0d1a",
-                        bgcolor=COLOR_CYAN,
+                        icon_color="#ffffff",
+                        bgcolor=COLOR_PRIMARY,
                         width=64,
                         height=64,
                         style=ft.ButtonStyle(shape=ft.CircleBorder()),
                         on_click=self.start_recording,
                         tooltip="Aufzeichnung starten",
                     ),
-                    ft.Text("START", size=11, weight=ft.FontWeight.BOLD, color=COLOR_CYAN),
+                    ft.Text("START", size=11, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=4,
@@ -1843,11 +2145,7 @@ class RinApp:
 
         self.root.controls = [
             header_bar,
-            ft.Container(
-                content=content,
-                padding=ft.Padding.symmetric(horizontal=14, vertical=8),
-                expand=True,
-            ),
+            self.content_container,
             bottom_bar,
         ]
         self._page.update()

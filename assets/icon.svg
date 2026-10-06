@@ -3,57 +3,55 @@
   <defs>
     <style>
       .bg { fill: #0a0c10; }
-      .app-frame { fill: none; stroke: #ffffff; stroke-opacity: 0.08; stroke-width: 2; }
       .brand-text {
         font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        font-size: 116px;
+        font-size: 152px;
         font-weight: 900;
-        letter-spacing: 2px;
+        letter-spacing: 3px;
         fill: #ffffff;
       }
-      .axis-line { stroke: #1e2633; stroke-width: 2.5; stroke-dasharray: 4 6; stroke-linecap: round; }
+      .axis-line { stroke: #2a3444; stroke-width: 3.5; stroke-dasharray: 6 8; stroke-linecap: round; }
       .graph-line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-      .curve-top { stroke: #10b981; stroke-width: 9; }
-      .curve-mid { stroke: #f59e0b; stroke-width: 9; }
-      .curve-bot { stroke: #ef4444; stroke-width: 9; }
-      .origin-node { fill: #334155; }
+      .curve-top { stroke: #10b981; stroke-width: 14; }
+      .curve-mid { stroke: #f59e0b; stroke-width: 14; }
+      .curve-bot { stroke: #ef4444; stroke-width: 14; }
+      .origin-node { fill: #475569; }
     </style>
   </defs>
 
-  <!-- Hintergrund (App-Icon Canvas) -->
+  <!-- Hintergrund (Full Canvas für maximale Größenausnutzung im Launcher) -->
   <g id="background">
-    <rect class="bg" width="500" height="500" rx="108" />
-    <rect class="app-frame" x="2" y="2" width="496" height="496" rx="106" />
+    <rect class="bg" width="500" height="500" />
   </g>
 
-  <!-- Branding / Logo-Schriftzug -->
+  <!-- Branding / Logo-Schriftzug (Maximale Größe) -->
   <g id="logo-branding">
-    <text class="brand-text" x="54" y="154">RIN</text>
+    <text class="brand-text" x="32" y="152">RIN</text>
   </g>
 
-  <!-- Dezentes Koordinatensystem / Basislinien -->
+  <!-- Koordinatensystem / Basislinien -->
   <g id="axes">
-    <line class="axis-line" x1="56" y1="430" x2="444" y2="430" />
-    <line class="axis-line" x1="56" y1="430" x2="56" y2="190" />
+    <line class="axis-line" x1="32" y1="468" x2="468" y2="468" />
+    <line class="axis-line" x1="32" y1="468" x2="32" y2="185" />
   </g>
 
   <!-- Degressiv ansteigende Graphen (f'(x) > 0, f''(x) < 0) -->
   <g id="degressive-graphs">
-    <!-- Oberer Graph: Grün (Ziel: y = 210) -->
-    <path id="graph-green" class="graph-line curve-top" d="M 56 430 C 130 240, 270 210, 444 210" />
+    <!-- Oberer Graph: Grün (Ziel: y = 195) -->
+    <path id="graph-green" class="graph-line curve-top" d="M 32 468 C 115 230, 260 195, 468 195" />
     
     <!-- Mittlerer Graph: Bernstein/Gelb (Ziel: y = 275) -->
-    <path id="graph-amber" class="graph-line curve-mid" d="M 56 430 C 140 295, 280 275, 444 275" />
+    <path id="graph-amber" class="graph-line curve-mid" d="M 32 468 C 125 300, 270 275, 468 275" />
     
-    <!-- Unterer Graph: Rot (Ziel: y = 340) -->
-    <path id="graph-red" class="graph-line curve-bot" d="M 56 430 C 150 350, 290 340, 444 340" />
+    <!-- Unterer Graph: Rot (Ziel: y = 355) -->
+    <path id="graph-red" class="graph-line curve-bot" d="M 32 468 C 135 370, 280 355, 468 355" />
   </g>
 
   <!-- Graph-Endpunkte & Ursprungspunkt -->
   <g id="data-nodes">
-    <circle class="origin-node" cx="56" cy="430" r="5" />
-    <circle cx="444" cy="210" r="6.5" fill="#10b981" />
-    <circle cx="444" cy="275" r="6.5" fill="#f59e0b" />
-    <circle cx="444" cy="340" r="6.5" fill="#ef4444" />
+    <circle class="origin-node" cx="32" cy="468" r="8" />
+    <circle cx="468" cy="195" r="10" fill="#10b981" />
+    <circle cx="468" cy="275" r="10" fill="#f59e0b" />
+    <circle cx="468" cy="355" r="10" fill="#ef4444" />
   </g>
 </svg>

@@ -56,7 +56,7 @@ jobs:
 
       - name: Build APK
         run: |
-          flet build apk --project rin08_live --product "RIN08-Live" --permissions location --yes
+          flet build apk --org de.unistuttgart.isv --project rin --product "RIN08-Live" --permissions location --yes
 
       - name: Prepare APK File
         run: |

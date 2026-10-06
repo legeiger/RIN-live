@@ -39,11 +39,11 @@ dev = [
 title = "RIN08 Live"
 
 [tool.flet]
-org = "dev.flet"
-project = "rin08_live"
+org = "de.unistuttgart.isv"
+project = "rin"
 product = "RIN08-Live"
-company = "Leander Geiger"
-copyright = "Copyright (C) 2026 by Leander Geiger"
+company = "ISV - Universität Stuttgart"
+copyright = "Copyright (C) 2026 ISV Universität Stuttgart"
 
 [tool.flet.android]
 permissions = [

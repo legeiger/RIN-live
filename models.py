@@ -21,7 +21,7 @@ DEFAULT_PARAMS = {
 
 @dataclass
 class Settings:
-    mode: str = "PKW"
+    mode: str = "IOE"
     gps_interval: float = 2.0
     min_accuracy: float = 5.0
     max_current_speed: float = 350.0
@@ -111,7 +111,7 @@ def haversine_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> floa
 def saq_for(distance_km: float, straight_speed_kmh: float, settings: Settings) -> tuple[int, str]:
     if distance_km < 0.01 or straight_speed_kmh <= 0:
         return 1, "A"
-    parameters = settings.params.get(settings.mode, DEFAULT_PARAMS["PKW"])
+    parameters = settings.params.get(settings.mode, DEFAULT_PARAMS["IOE"])
     limits = []
     for index in range(5):
         denominator = parameters["a"][index] * (distance_km ** parameters["b"][index]) + parameters["c"][index]
@@ -370,7 +370,7 @@ class SQLiteStore:
 
     def start_session(self, session_id: str, started_or_mode: Any = 0) -> None:
         started_ms = started_or_mode if isinstance(started_or_mode, int) else int(datetime.now().timestamp() * 1000)
-        mode = started_or_mode if isinstance(started_or_mode, str) else "PKW"
+        mode = started_or_mode if isinstance(started_or_mode, str) else "IOE"
         with self._connect() as connection:
             connection.execute("INSERT OR REPLACE INTO sessions (id, started_ms, mode) VALUES (?, ?, ?)", (session_id, started_ms, mode))
 
@@ -410,7 +410,7 @@ class SQLiteStore:
             results.append({
                 "id": row[0],
                 "started_ms": row[1],
-                "mode": row[2] or "PKW",
+                "mode": row[2] or "IOE",
                 "point_count": row[3],
                 "total_distance_km": row[4],
                 "straight_distance_km": row[5],
