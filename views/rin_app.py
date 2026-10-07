@@ -965,16 +965,16 @@ class RinApp:
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text(title, size=10, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_MUTED),
+                    ft.Text(title, size=10, weight=ft.FontWeight.BOLD, color="rgba(255,255,255,0.7)"),
                     ft.Text(spans=spans),
                 ],
                 spacing=4,
             ),
             bgcolor=COLOR_CARD,
-            border_radius=10,
+            border_radius=6,
             padding=ft.Padding.symmetric(horizontal=14, vertical=12),
             expand=True,
-            border=ft.Border.all(1, "rgba(255,255,255,0.05)"),
+            border=ft.Border.all(1, "rgba(255,255,255,0.06)"),
         )
 
     def _tab_button(self, label: str, tab: str) -> ft.Control:
@@ -982,14 +982,14 @@ class RinApp:
         return ft.Button(
             content=ft.Text(
                 label,
-                size=12,
-                weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL,
-                color="#ffffff" if is_active else "rgba(255,255,255,0.7)",
+                size=13.5,
+                weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.W_600,
+                color="#ffffff" if is_active else "rgba(255,255,255,0.75)",
             ),
             bgcolor=COLOR_PRIMARY if is_active else "rgba(255,255,255,0.06)",
             style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=8),
-                padding=ft.Padding.symmetric(vertical=8, horizontal=8),
+                shape=ft.RoundedRectangleBorder(radius=6),
+                padding=ft.Padding.symmetric(vertical=10, horizontal=6),
                 elevation=0,
             ),
             on_click=self.switch_tab(tab),
@@ -1043,7 +1043,7 @@ class RinApp:
                     spacing=6,
                 ),
                 bgcolor="rgba(255, 255, 255, 0.04)",
-                border_radius=8,
+                border_radius=6,
                 padding=ft.Padding.symmetric(vertical=6, horizontal=12),
                 border=ft.Border.all(1, f"{st_color}33"),
             )
@@ -1056,7 +1056,7 @@ class RinApp:
                         "ANGEBOTSQUALITÄT (SAQ)",
                         size=11,
                         weight=ft.FontWeight.BOLD,
-                        color="rgba(255, 255, 255, 0.6)",
+                        color="#ffffff",
                         text_align=ft.TextAlign.CENTER,
                     ),
                     ft.Text(
@@ -1069,16 +1069,16 @@ class RinApp:
                     ft.Text(
                         grade_desc,
                         size=13,
-                        color="rgba(255, 255, 255, 0.7)",
+                        color="rgba(255, 255, 255, 0.8)",
                         text_align=ft.TextAlign.CENTER,
                     ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=2,
             ),
-            bgcolor=COLOR_HERO,
-            border=ft.Border.all(1, "rgba(59, 130, 214, 0.35)"),
-            border_radius=12,
+            bgcolor=COLOR_CARD,
+            border=ft.Border.all(1, "rgba(255, 255, 255, 0.08)"),
+            border_radius=6,
             padding=ft.Padding.symmetric(vertical=14, horizontal=16),
             alignment=ft.Alignment.CENTER,
         )
@@ -1088,9 +1088,9 @@ class RinApp:
             content=self._chart(),
             height=260,
             bgcolor=COLOR_CARD,
-            border_radius=12,
+            border_radius=6,
             padding=ft.Padding.only(top=14, bottom=8, left=10, right=14),
-            border=ft.Border.all(1, "rgba(255, 255, 255, 0.04)"),
+            border=ft.Border.all(1, "rgba(255, 255, 255, 0.06)"),
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
 
@@ -1167,11 +1167,15 @@ class RinApp:
         params = self.settings.params[self.settings.mode]
         right_labels = []
 
-        # Generate SAQ curves with rounded coordinates (2 digits after decimal)
-        # Suppress tooltips on curve lines as requested: only tracked data shows tooltips
+        # Generate SAQ curves with integer right-end alignment for 1.0 step axis labels
+        # Suppress tooltips and selection dots on curves: only tracked GPS data displays tooltips
         for index in range(5):
+            end_denom = (params["a"][index] * (max_distance ** params["b"][index])) + params["c"][index]
+            raw_end_speed = (1.0 / end_denom) if end_denom else 0.0
+            end_speed_int = max(1, min(int(round(raw_end_speed)), int(max_speed)))
+
             points = []
-            for step in range(51):
+            for step in range(50):
                 distance = min_distance + (max_distance - min_distance) * (step / 50.0)
                 safe_dist = max(0.05, distance)
                 denom = (params["a"][index] * (safe_dist ** params["b"][index])) + params["c"][index]
@@ -1184,16 +1188,23 @@ class RinApp:
                     )
                 )
 
-            # Labeled at the right end of the curve lines and slightly above it in the graph color
-            end_denom = (params["a"][index] * (max_distance ** params["b"][index])) + params["c"][index]
-            end_speed = round(min((1.0 / end_denom) if end_denom else 0.0, max_speed), 2)
+            # Final curve point lands exactly on the integer y-coordinate of the axis label
+            points.append(
+                ftc.LineChartDataPoint(
+                    round(max_distance, 2),
+                    float(end_speed_int),
+                    show_tooltip=False,
+                )
+            )
+
+            # Labeled at the right end of the curve line and slightly above it in the graph color
             saq_letter = ["A", "B", "C", "D", "E"][index]
             right_labels.append(
                 ftc.ChartAxisLabel(
-                    value=end_speed,
+                    value=float(end_speed_int),
                     label=ft.Container(
                         content=ft.Text(
-                            f"SAQ {saq_letter}",
+                            f"Stufe {saq_letter}",
                             size=10,
                             weight=ft.FontWeight.BOLD,
                             color=curve_colors[index],
@@ -1210,6 +1221,9 @@ class RinApp:
                     color=curve_colors[index],
                     stroke_width=1.5,
                     curved=True,
+                    point=False,
+                    selected_point=False,
+                    selected_below_line=False,
                 )
             )
 
@@ -1223,7 +1237,7 @@ class RinApp:
             for pt in points_history:
                 dt = datetime.fromtimestamp(pt.timestamp_ms / 1000)
                 time_str = dt.strftime("%H:%M")
-                tip_text = f"{time_str}\nV-Luft: {pt.straight_speed_kmh:.1f} km/h\nSAQ {pt.saq}"
+                tip_text = f"{time_str}\nV-Luft: {pt.straight_speed_kmh:.1f} km/h\nStufe {pt.saq}"
                 trajectory.append(
                     ftc.LineChartDataPoint(
                         round(pt.straight_distance_km, 2),
@@ -1236,9 +1250,11 @@ class RinApp:
                 ftc.LineChartData(
                     points=trajectory,
                     color=COLOR_PRIMARY,
-                    stroke_width=3,
+                    stroke_width=2.5,
                     curved=False,
-                    point=ftc.ChartCirclePoint(radius=3.5, color=COLOR_PRIMARY),
+                    point=False,
+                    selected_point=False,
+                    selected_below_line=False,
                 )
             )
 
@@ -1250,7 +1266,7 @@ class RinApp:
             bottom_labels.append(
                 ftc.ChartAxisLabel(
                     value=round(x_val, 2),
-                    label=ft.Text(lbl_str, size=9, color="rgba(255,255,255,0.6)"),
+                    label=ft.Text(lbl_str, size=9, color="rgba(255,255,255,0.7)"),
                 )
             )
             x_val += step_x
@@ -1263,7 +1279,7 @@ class RinApp:
             left_labels.append(
                 ftc.ChartAxisLabel(
                     value=round(y_val, 2),
-                    label=ft.Text(lbl_str, size=9, color="rgba(255,255,255,0.6)"),
+                    label=ft.Text(lbl_str, size=9, color="rgba(255,255,255,0.7)"),
                 )
             )
             y_val += step_y
@@ -1276,22 +1292,22 @@ class RinApp:
             max_y=max_speed,
             interactive=True,
             tooltip=ftc.LineChartTooltip(
-                bgcolor="#1a1a2e",
-                border_side=ft.BorderSide(1, COLOR_PRIMARY),
-                border_radius=8,
+                bgcolor="rgba(15, 23, 42, 0.95)",
+                border_side=ft.BorderSide(1, "rgba(255,255,255,0.15)"),
+                border_radius=4,
                 fit_inside_horizontally=True,
                 fit_inside_vertically=True,
             ),
             left_axis=ftc.ChartAxis(
                 labels=left_labels,
-                title=ft.Text("V-Luftlinie (km/h)", size=10, color="rgba(255,255,255,0.6)"),
+                title=ft.Text("V-Luftlinie (km/h)", size=10, color="rgba(255,255,255,0.7)"),
                 title_size=24,
                 show_labels=True,
                 label_size=28,
             ),
             bottom_axis=ftc.ChartAxis(
                 labels=bottom_labels,
-                title=ft.Text("Luftliniendistanz (km)", size=10, color="rgba(255,255,255,0.6)"),
+                title=ft.Text("Luftliniendistanz (km)", size=10, color="rgba(255,255,255,0.7)"),
                 title_size=20,
                 show_labels=True,
                 label_size=20,
@@ -1300,57 +1316,83 @@ class RinApp:
                 labels=right_labels,
                 show_labels=True,
                 label_size=55,
+                label_spacing=1.0,
             ),
-            horizontal_grid_lines=ftc.ChartGridLines(color="rgba(255,255,255,0.06)", width=1),
-            vertical_grid_lines=ftc.ChartGridLines(color="rgba(255,255,255,0.06)", width=1),
+            horizontal_grid_lines=ftc.ChartGridLines(color="rgba(255,255,255,0.05)", width=1),
+            vertical_grid_lines=ftc.ChartGridLines(color="rgba(255,255,255,0.05)", width=1),
         )
 
     def data_view(self) -> ft.Column:
         sessions = self.store.list_sessions()
         points = self.store.points_for(self.tracker.session_id)
         
-        # Summary & Export Action Bar
+        # Summary & Export Action Bar (wraps into second row on narrow smartphone screens)
         action_row = ft.Row(
+            wrap=True,
+            spacing=8,
+            run_spacing=8,
             controls=[
                 ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, size=15), ft.Text("Daten an Server senden", size=12)]),
+                    content=ft.Row([ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, size=16), ft.Text("Daten an Server senden", size=13)], spacing=6),
                     bgcolor="#10B981",
                     color="#ffffff",
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=6),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                    ),
                     on_click=lambda _: self.confirm_server_upload(None),
                 ),
                 ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD_ROUNDED, size=15), ft.Text("Exportieren", size=12)]),
+                    content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD_ROUNDED, size=16), ft.Text("Exportieren", size=13)], spacing=6),
                     bgcolor=COLOR_PRIMARY,
                     color="#ffffff",
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=6),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                    ),
                     on_click=lambda _: self.prompt_export(None, is_share=False),
                 ),
                 ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.ALL_INBOX_ROUNDED, size=15), ft.Text("Alle exportieren", size=12)]),
+                    content=ft.Row([ft.Icon(ft.Icons.ALL_INBOX_ROUNDED, size=16), ft.Text("Alle exportieren", size=13)], spacing=6),
                     bgcolor="rgba(59, 130, 214, 0.2)",
                     color=COLOR_PRIMARY,
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=6),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                    ),
                     on_click=lambda _: self.prompt_export_all(is_share=False),
                 ),
                 ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.SHARE_ROUNDED, size=15), ft.Text("Teilen", size=12)]),
+                    content=ft.Row([ft.Icon(ft.Icons.SHARE_ROUNDED, size=16), ft.Text("Teilen", size=13)], spacing=6),
                     bgcolor="rgba(255,255,255,0.08)",
                     color=COLOR_TEXT_PRIMARY,
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=6),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                    ),
                     on_click=lambda _: self.prompt_export(None, is_share=True),
                 ),
                 ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.CONTENT_COPY, size=15), ft.Text("Kopieren", size=12)]),
+                    content=ft.Row([ft.Icon(ft.Icons.CONTENT_COPY, size=16), ft.Text("Kopieren", size=13)], spacing=6),
                     bgcolor="rgba(255,255,255,0.08)",
                     color=COLOR_TEXT_PRIMARY,
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=6),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                    ),
                     on_click=lambda _: self._page.run_task(self.copy_csv),
                 ),
                 ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.VISIBILITY, size=15), ft.Text("Vorschau", size=12)]),
+                    content=ft.Row([ft.Icon(ft.Icons.VISIBILITY, size=16), ft.Text("Vorschau", size=13)], spacing=6),
                     bgcolor="rgba(255,255,255,0.08)",
                     color=COLOR_TEXT_PRIMARY,
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=6),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                    ),
                     on_click=self.toggle_csv,
                 ),
             ],
-            spacing=6,
-            scroll=ft.ScrollMode.ADAPTIVE,
         )
 
         # Track History Section
@@ -1448,7 +1490,7 @@ class RinApp:
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         bgcolor="rgba(59, 130, 214, 0.08)" if is_active else "rgba(255, 255, 255, 0.03)",
-                        border_radius=8,
+                        border_radius=4,
                         padding=ft.Padding.symmetric(horizontal=10, vertical=8),
                         border=ft.Border.all(1, COLOR_PRIMARY if is_active else "rgba(255, 255, 255, 0.05)"),
                     )
@@ -1460,7 +1502,7 @@ class RinApp:
                     ft.Row(
                         controls=[
                             ft.Icon(ft.Icons.HISTORY_ROUNDED, size=16, color=COLOR_PRIMARY),
-                            ft.Text(f"Fahrten-Historie ({len(sessions)})", size=13, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                            ft.Text(f"Fahrten-Historie ({len(sessions)})", size=13, weight=ft.FontWeight.BOLD, color="#ffffff"),
                         ],
                         spacing=6,
                     ),
@@ -1469,7 +1511,7 @@ class RinApp:
                 spacing=8,
             ),
             bgcolor=COLOR_CARD,
-            border_radius=12,
+            border_radius=6,
             padding=12,
         )
 
@@ -1496,7 +1538,7 @@ class RinApp:
                     ),
                     bgcolor="rgba(0,0,0,0.3)",
                     padding=ft.Padding.symmetric(vertical=8, horizontal=10),
-                    border_radius=6,
+                    border_radius=4,
                 )
             )
             for pt in reversed(points[-100:]):
@@ -1531,7 +1573,7 @@ class RinApp:
                     ft.Row(
                         controls=[
                             ft.Icon(ft.Icons.LIST_ALT_ROUNDED, size=16, color=COLOR_PRIMARY),
-                            ft.Text(f"Datenpunkte ({self.tracker.session_id or 'Keine Fahrt'}: {len(points)} Pkt)", size=13, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                            ft.Text(f"Datenpunkte ({self.tracker.session_id or 'Keine Fahrt'}: {len(points)} Pkt)", size=13, weight=ft.FontWeight.BOLD, color="#ffffff"),
                         ],
                         spacing=6,
                     ),
@@ -1540,7 +1582,7 @@ class RinApp:
                 spacing=8,
             ),
             bgcolor=COLOR_CARD,
-            border_radius=12,
+            border_radius=6,
             padding=10,
         )
 
@@ -1696,20 +1738,21 @@ class RinApp:
                     spacing=6,
                 ),
                 bgcolor=COLOR_CARD,
-                border_radius=10,
+                border_radius=6,
                 padding=14,
             ),
             ft.Button(
                 content=ft.Text("GPS manuell abfragen"),
                 bgcolor=COLOR_PRIMARY,
                 color="#ffffff",
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
                 on_click=lambda _: self._page.run_task(self.fetch_location),
             ),
-            ft.Text("Live Console Log", size=13, weight=ft.FontWeight.BOLD),
+            ft.Text("Live Console Log", size=13, weight=ft.FontWeight.BOLD, color="#ffffff"),
             ft.Container(
                 content=ft.Text("\n".join(self.logs), size=11, color="#69F0AE", selectable=True),
                 bgcolor="rgba(0,0,0,0.5)",
-                border_radius=8,
+                border_radius=6,
                 padding=12,
                 border=ft.Border.all(1, "rgba(255,255,255,0.08)"),
                 expand=True,
@@ -1721,7 +1764,7 @@ class RinApp:
         filter_group = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Filter & Evaluierung", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                    ft.Text("Filter & Evaluierung", size=14, weight=ft.FontWeight.BOLD, color="#ffffff"),
                     ft.Row(
                         controls=[
                             ft.Text("Bewertungsmodus", size=13, expand=True),
@@ -1780,7 +1823,7 @@ class RinApp:
                 spacing=10,
             ),
             bgcolor=COLOR_CARD,
-            border_radius=12,
+            border_radius=6,
             padding=14,
         )
 
@@ -1812,7 +1855,7 @@ class RinApp:
         saq_group = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("SAQ Parameter (Kurven)", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                    ft.Text("SAQ Parameter (Kurven)", size=14, weight=ft.FontWeight.BOLD, color="#ffffff"),
                     *param_rows,
                     ft.Container(height=6),
                     ft.Row(
@@ -1821,6 +1864,7 @@ class RinApp:
                                 content=ft.Text("Reset Default"),
                                 bgcolor="rgba(255, 107, 107, 0.15)",
                                 color=COLOR_DANGER,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
                                 on_click=self.reset_parameters,
                                 expand=True,
                             ),
@@ -1828,6 +1872,7 @@ class RinApp:
                                 content=ft.Text("Speichern"),
                                 bgcolor=COLOR_PRIMARY,
                                 color="#ffffff",
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
                                 on_click=self.save_settings,
                                 expand=True,
                             ),
@@ -1838,14 +1883,14 @@ class RinApp:
                 spacing=8,
             ),
             bgcolor=COLOR_CARD,
-            border_radius=12,
+            border_radius=6,
             padding=14,
         )
 
         chart_group = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Diagramm Einstellungen (Bounds & Offset)", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                    ft.Text("Diagramm Einstellungen (Bounds & Offset)", size=14, weight=ft.FontWeight.BOLD, color="#ffffff"),
                     ft.Row(
                         controls=[
                             ft.Text("Standard X-Max (Luftlinie km)", size=13, expand=True),
@@ -1895,7 +1940,7 @@ class RinApp:
                 spacing=10,
             ),
             bgcolor=COLOR_CARD,
-            border_radius=12,
+            border_radius=6,
             padding=14,
         )
 
@@ -1904,7 +1949,7 @@ class RinApp:
                 controls=[
                     ft.Row([
                         ft.Icon(ft.Icons.SECURITY_ROUNDED, size=16, color=COLOR_PRIMARY),
-                        ft.Text("Android System-Berechtigungen & Akku", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                        ft.Text("Android System-Berechtigungen & Akku", size=14, weight=ft.FontWeight.BOLD, color="#ffffff"),
                     ], spacing=6),
                     ft.Text(
                         "Für zuverlässige Messungen im Hintergrund bei gesperrtem Bildschirm müssen der Standort auf 'Immer zulassen' und die Akku-Nutzung auf 'Nicht eingeschränkt' gesetzt sein.",
@@ -1920,6 +1965,7 @@ class RinApp:
                                 ], spacing=6, tight=True),
                                 bgcolor="rgba(245, 158, 11, 0.15)",
                                 color="#f59e0b",
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
                                 on_click=lambda _: self._page.run_task(self.open_app_settings),
                             ),
                             ft.Button(
@@ -1929,6 +1975,7 @@ class RinApp:
                                 ], spacing=6, tight=True),
                                 bgcolor="rgba(59, 130, 214, 0.15)",
                                 color=COLOR_PRIMARY,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
                                 on_click=lambda _: self._page.run_task(self.open_location_settings),
                             ),
                         ],
@@ -1939,7 +1986,7 @@ class RinApp:
                 spacing=8,
             ),
             bgcolor=COLOR_CARD,
-            border_radius=12,
+            border_radius=6,
             padding=14,
         )
 
@@ -1948,7 +1995,7 @@ class RinApp:
                 controls=[
                     ft.Row([
                         ft.Icon(ft.Icons.CLOUD_UPLOAD_ROUNDED, size=16, color=COLOR_PRIMARY),
-                        ft.Text("Datenspende", size=14, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                        ft.Text("Datenspende", size=14, weight=ft.FontWeight.BOLD, color="#ffffff"),
                     ], spacing=6),
                     ft.Text(
                         "API-Endpoint für die Übertragung anonymisierter Fahrtdaten. Standardmäßig ist der Server des Institut für Straßen- und Verkehrswesen (ISV) der Universität Stuttgart voreingestellt.",
@@ -1968,12 +2015,14 @@ class RinApp:
                                 content=ft.Text("Standard wiederherstellen"),
                                 bgcolor="rgba(255, 255, 255, 0.08)",
                                 color="rgba(255, 255, 255, 0.8)",
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
                                 on_click=self.reset_api_endpoint,
                             ),
                             ft.Button(
                                 content=ft.Text("Speichern"),
                                 bgcolor=COLOR_PRIMARY,
                                 color="#ffffff",
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
                                 on_click=self.save_settings,
                             ),
                         ],
@@ -1984,7 +2033,7 @@ class RinApp:
                 spacing=8,
             ),
             bgcolor=COLOR_CARD,
-            border_radius=12,
+            border_radius=6,
             padding=14,
         )
 
@@ -2011,7 +2060,7 @@ class RinApp:
         header_bar = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("RIN08-Live", size=20, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                    ft.Text("RIN08-Live", size=22, weight=ft.FontWeight.BOLD, color="#ffffff"),
                     ft.Row(
                         controls=[
                             self._tab_button("Dashboard", "dashboard"),

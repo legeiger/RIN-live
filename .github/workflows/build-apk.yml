@@ -58,6 +58,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install ".[dev]"
 
+      - name: Patch flet-charts tooltip assertion bug
+        run: |
+          python -c "
+          import pathlib, site
+          for p in site.getsitepackages():
+              f = pathlib.Path(p) / 'flutter/flet_charts/lib/src/utils/line_chart.dart'
+              if f.exists():
+                  t = f.read_text('utf-8')
+                  t = t.replace('.nonNulls\n          .toList()', '.toList()').replace('.nonNulls.toList()', '.toList()')
+                  f.write_text(t, 'utf-8')
+                  print('Successfully patched', f)
+          "
+
       - name: Build APK
         run: |
           flet build apk --org de.unistuttgart.isv --project rin --product "RIN08-Live" --permissions location --yes
