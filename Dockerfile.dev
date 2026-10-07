@@ -4,6 +4,8 @@ WORKDIR /app
 
 # Copy pyproject.toml first to leverage Docker layer caching
 COPY pyproject.toml .
+COPY main.py models.py ./
+COPY views views/
 
 # Install dependencies defined in pyproject.toml
 RUN pip install --no-cache-dir --upgrade pip && \

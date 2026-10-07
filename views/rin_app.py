@@ -60,6 +60,7 @@ class RinApp:
         self.csv_visible = False
         self.last_position = None
         self.logs = ["RIN-Live bereit.", "SQLite-Speicher initialisiert."]
+        self.location_permission_status: ftg.GeolocatorPermissionStatus | None = None
 
         # GPS background service
         self.geolocator = ftg.Geolocator(
@@ -125,9 +126,11 @@ class RinApp:
         # Start timer clock
         if hasattr(self._page, "run_task"):
             self._page.run_task(self._clock)
+            self._page.run_task(self.check_permissions)
         else:
             try:
                 asyncio.create_task(self._clock())
+                asyncio.create_task(self.check_permissions())
             except RuntimeError:
                 pass
 
@@ -192,6 +195,127 @@ class RinApp:
             self._log("Android Standorteinstellungen geöffnet.")
         except Exception as err:
             self._log(f"Konnte Standorteinstellungen nicht öffnen: {err}")
+
+    async def check_permissions(self, _event=None) -> None:
+        try:
+            status = await self.geolocator.get_permission_status()
+            self.location_permission_status = status
+            status_label = status.name if hasattr(status, "name") else str(status)
+            self._log(f"Standort-Berechtigungsstatus: {status_label}")
+        except Exception as err:
+            self._log(f"Berechtigungsprüfung fehlgeschlagen: {err}")
+            self.location_permission_status = None
+        self.render()
+
+    def build_permissions_container(self, on_dashboard: bool = False) -> ft.Control | None:
+        is_granted = self.location_permission_status == ftg.GeolocatorPermissionStatus.ALWAYS
+
+        if on_dashboard and is_granted:
+            return None
+
+        status_text = "Hintergrund-Standort nicht aktiv"
+        if self.location_permission_status == ftg.GeolocatorPermissionStatus.WHILE_IN_USE:
+            status_text = "Nur bei App-Nutzung (Hintergrund fehlt)"
+        elif self.location_permission_status in {
+            ftg.GeolocatorPermissionStatus.DENIED,
+            ftg.GeolocatorPermissionStatus.DENIED_FOREVER,
+        }:
+            status_text = "Standort verweigert"
+        elif is_granted:
+            status_text = "Aktiv ('Immer zulassen')"
+
+        accent_color = COLOR_SUCCESS if is_granted else "#f59e0b"
+        icon_type = ft.Icons.CHECK_CIRCLE_ROUNDED if is_granted else ft.Icons.WARNING_AMBER_ROUNDED
+
+        title_text = "Android System-Berechtigungen & Akku" if not on_dashboard else "Standort im Hintergrund & Akku"
+
+        instructions = [
+            ft.Row(
+                controls=[
+                    ft.Icon(icon_type, size=16, color=accent_color),
+                    ft.Text(title_text, size=13, weight=ft.FontWeight.BOLD, color="#ffffff"),
+                    ft.Container(
+                        content=ft.Text(status_text, size=9.5, weight=ft.FontWeight.W_600, color=accent_color),
+                        bgcolor=f"{accent_color}18",
+                        border=ft.Border.all(1, f"{accent_color}44"),
+                        border_radius=4,
+                        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                    ),
+                ],
+                spacing=6,
+                wrap=True,
+            ),
+        ]
+
+        if not is_granted:
+            instructions.append(
+                ft.Text(
+                    "Für lückenlose Messung bei gesperrtem Bildschirm bitte einrichten:\n"
+                    "1. Standort auf 'Immer zulassen' (Allow all the time) setzen.\n"
+                    "2. Akku-Nutzung dieser App auf 'Nicht eingeschränkt' (Unrestricted) setzen.",
+                    size=10.5,
+                    color="rgba(255, 255, 255, 0.85)",
+                )
+            )
+        else:
+            instructions.append(
+                ft.Text(
+                    "Hintergrund-Standort ist auf 'Immer zulassen' gesetzt. Bitte stelle sicher, dass unter Akkunutzung auch 'Nicht eingeschränkt' aktiv ist.",
+                    size=10.5,
+                    color=COLOR_TEXT_MUTED,
+                )
+            )
+
+        btn_row = ft.Row(
+            controls=[
+                ft.Button(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.LOCATION_ON_ROUNDED, size=14),
+                        ft.Text("Standort 'Immer zulassen'", size=11, weight=ft.FontWeight.BOLD),
+                    ], spacing=5, tight=True),
+                    bgcolor="rgba(59, 130, 214, 0.2)",
+                    color=COLOR_PRIMARY,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
+                    on_click=lambda _: self._page.run_task(self.open_location_settings),
+                ),
+                ft.Button(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.BATTERY_ALERT_ROUNDED, size=14),
+                        ft.Text("Akku 'Nicht eingeschränkt'", size=11, weight=ft.FontWeight.BOLD),
+                    ], spacing=5, tight=True),
+                    bgcolor="rgba(245, 158, 11, 0.2)",
+                    color="#f59e0b",
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
+                    on_click=lambda _: self._page.run_task(self.open_app_settings),
+                ),
+                ft.Button(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.REFRESH_ROUNDED, size=14),
+                        ft.Text("Status prüfen", size=11),
+                    ], spacing=5, tight=True),
+                    bgcolor="rgba(255, 255, 255, 0.08)",
+                    color="rgba(255, 255, 255, 0.8)",
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
+                    on_click=lambda _: self._page.run_task(self.check_permissions),
+                ),
+            ],
+            spacing=8,
+            wrap=True,
+        )
+
+        return ft.Container(
+            content=ft.Column(
+                controls=[
+                    *instructions,
+                    btn_row,
+                ],
+                spacing=8,
+            ),
+            bgcolor=COLOR_CARD,
+            border=ft.Border.all(1, f"{accent_color}55" if not is_granted else "rgba(255,255,255,0.08)"),
+            border_radius=6,
+            padding=12,
+        )
 
     def request_start_recording(self, _event=None) -> None:
         def on_cancel(_e):
@@ -428,7 +552,7 @@ class RinApp:
         )
         self._page.show_dialog(dialog)
 
-    async def fetch_location(self, _event) -> None:
+    async def fetch_location(self, _event=None) -> None:
         try:
             position = await self.geolocator.get_current_position()
             if position is None:
@@ -944,7 +1068,7 @@ class RinApp:
             ft.TextSpan(
                 text=value,
                 style=ft.TextStyle(
-                    size=22,
+                    size=19,
                     weight=ft.FontWeight.BOLD,
                     color=COLOR_PRIMARY if highlight else COLOR_TEXT_PRIMARY,
                 ),
@@ -955,7 +1079,7 @@ class RinApp:
                 ft.TextSpan(
                     text=f" {unit}",
                     style=ft.TextStyle(
-                        size=11,
+                        size=10,
                         weight=ft.FontWeight.NORMAL,
                         color=COLOR_TEXT_MUTED,
                     ),
@@ -965,14 +1089,14 @@ class RinApp:
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text(title, size=10, weight=ft.FontWeight.BOLD, color="rgba(255,255,255,0.7)"),
+                    ft.Text(title, size=9.5, weight=ft.FontWeight.BOLD, color="rgba(255,255,255,0.65)"),
                     ft.Text(spans=spans),
                 ],
-                spacing=4,
+                spacing=2,
             ),
             bgcolor=COLOR_CARD,
             border_radius=6,
-            padding=ft.Padding.symmetric(horizontal=14, vertical=12),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
             expand=True,
             border=ft.Border.all(1, "rgba(255,255,255,0.06)"),
         )
@@ -1048,48 +1172,55 @@ class RinApp:
                 border=ft.Border.all(1, f"{st_color}33"),
             )
 
-        # 1. Hero Card: ANGEBOTSQUALITÄT (SAQ)
+        # 1. Hero Card: ANGEBOTSQUALITÄT (SAQ) - streamlined horizontal layout to eliminate viewport overflow
         saq_hero_card = ft.Container(
-            content=ft.Column(
+            content=ft.Row(
                 controls=[
-                    ft.Text(
-                        "ANGEBOTSQUALITÄT (SAQ)",
-                        size=11,
-                        weight=ft.FontWeight.BOLD,
-                        color="#ffffff",
-                        text_align=ft.TextAlign.CENTER,
+                    ft.Container(
+                        content=ft.Text(
+                            letter,
+                            size=42,
+                            weight=ft.FontWeight.W_800,
+                            color=saq_color,
+                        ),
+                        padding=ft.Padding.only(left=8, right=14),
                     ),
-                    ft.Text(
-                        letter,
-                        size=52,
-                        weight=ft.FontWeight.W_800,
-                        color=saq_color,
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                    ft.Text(
-                        grade_desc,
-                        size=13,
-                        color="rgba(255, 255, 255, 0.8)",
-                        text_align=ft.TextAlign.CENTER,
+                    ft.Column(
+                        controls=[
+                            ft.Text(
+                                "ANGEBOTSQUALITÄT (SAQ)",
+                                size=10,
+                                weight=ft.FontWeight.BOLD,
+                                color="rgba(255, 255, 255, 0.7)",
+                            ),
+                            ft.Text(
+                                grade_desc,
+                                size=13,
+                                weight=ft.FontWeight.BOLD,
+                                color="#ffffff",
+                            ),
+                        ],
+                        spacing=2,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        expand=True,
                     ),
                 ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=2,
+                alignment=ft.MainAxisAlignment.START,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=COLOR_CARD,
             border=ft.Border.all(1, "rgba(255, 255, 255, 0.08)"),
             border_radius=6,
-            padding=ft.Padding.symmetric(vertical=14, horizontal=16),
-            alignment=ft.Alignment.CENTER,
+            padding=ft.Padding.symmetric(vertical=8, horizontal=14),
         )
 
-        # 2. Line Chart (right-aligned SAQ labels, no top legend)
+        # 2. Line Chart (clean height of 215px to fit screen without scrolling)
         chart_container = ft.Container(
             content=self._chart(),
-            height=260,
+            height=215,
             bgcolor=COLOR_CARD,
             border_radius=6,
-            padding=ft.Padding.only(top=14, bottom=8, left=10, right=14),
+            padding=ft.Padding.only(top=10, bottom=6, left=8, right=10),
             border=ft.Border.all(1, "rgba(255, 255, 255, 0.06)"),
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
@@ -1100,7 +1231,7 @@ class RinApp:
                 self._metric_card("FAHRTDISTANZ", f"{metrics.total_distance_km:.2f}", "km", highlight=True),
                 self._metric_card("LUFTLINIE", f"{metrics.straight_distance_km:.2f}", "km", highlight=True),
             ],
-            spacing=10,
+            spacing=8,
         )
 
         row_speed = ft.Row(
@@ -1108,7 +1239,7 @@ class RinApp:
                 self._metric_card("V-AKTUELL (5 PKT)", f"{metrics.current_speed_kmh:.1f}", "km/h"),
                 self._metric_card("V-LUFTLINIE", f"{metrics.straight_speed_kmh:.1f}", "km/h"),
             ],
-            spacing=10,
+            spacing=8,
         )
 
         row_time = ft.Row(
@@ -1116,21 +1247,26 @@ class RinApp:
                 self._metric_card("ZEIT (TOTAL)", format_duration(elapsed)),
                 self._metric_card("ZEIT (BEWEGUNG)", format_duration(metrics.moving_time_ms)),
             ],
-            spacing=10,
+            spacing=8,
         )
+
+        perm_container = self.build_permissions_container(on_dashboard=True)
 
         dash_controls = []
         if track_banner:
             dash_controls.append(track_banner)
+        if perm_container:
+            dash_controls.append(perm_container)
         dash_controls.extend([
             saq_hero_card,
             chart_container,
             row_dist,
             row_speed,
             row_time,
-            ft.Container(height=8),
+            ft.Container(height=4),
         ])
 
+        self.dashboard_column.spacing = 8
         self.dashboard_column.controls = dash_controls
         return self.dashboard_column
 
@@ -1151,8 +1287,18 @@ class RinApp:
         min_speed = round(max(0.0, float(getattr(self.settings, "chart_min_y", 0.0))), 2)
         default_max_y = float(getattr(self.settings, "chart_default_max_y", 60.0))
         y_offset = float(getattr(self.settings, "chart_y_offset", 10.0))
+        params = self.settings.params[self.settings.mode]
+
+        # Check highest SAQ curve end speed at max_distance so curve is never clamped
+        highest_curve_end = 0.0
+        for idx in range(5):
+            d = (params["a"][idx] * (max_distance ** params["b"][idx])) + params["c"][idx]
+            s = (1.0 / d) if d else 0.0
+            if s > highest_curve_end:
+                highest_curve_end = s
+
         min_allowed_y = max(20.0, default_max_y)
-        max_speed_target = max(min_allowed_y, curr_speed + y_offset)
+        max_speed_target = max(min_allowed_y, curr_speed + y_offset, highest_curve_end + 2.0)
         max_speed = round(math.ceil(max_speed_target / step_y) * step_y, 2)
 
         curve_colors = [
@@ -1164,53 +1310,43 @@ class RinApp:
         ]
 
         series = []
-        params = self.settings.params[self.settings.mode]
         right_labels = []
 
-        # Generate SAQ curves with integer right-end alignment for 1.0 step axis labels
-        # Suppress tooltips and selection dots on curves: only tracked GPS data displays tooltips
+        # Generate smooth SAQ curves across full range with exact endpoints
+        # Suppress tooltips on background curves; only tracked GPS data displays tooltips
+        num_steps = 60
         for index in range(5):
             end_denom = (params["a"][index] * (max_distance ** params["b"][index])) + params["c"][index]
             raw_end_speed = (1.0 / end_denom) if end_denom else 0.0
-            end_speed_int = max(1, min(int(round(raw_end_speed)), int(max_speed)))
 
             points = []
-            for step in range(50):
-                distance = min_distance + (max_distance - min_distance) * (step / 50.0)
+            for step in range(num_steps + 1):
+                distance = min_distance + (max_distance - min_distance) * (step / float(num_steps))
                 safe_dist = max(0.05, distance)
                 denom = (params["a"][index] * (safe_dist ** params["b"][index])) + params["c"][index]
                 speed = (1.0 / denom) if denom else 0.0
                 points.append(
                     ftc.LineChartDataPoint(
                         round(distance, 2),
-                        round(min(speed, max_speed), 2),
+                        round(speed, 2),
                         show_tooltip=False,
                     )
                 )
 
-            # Final curve point lands exactly on the integer y-coordinate of the axis label
-            points.append(
-                ftc.LineChartDataPoint(
-                    round(max_distance, 2),
-                    float(end_speed_int),
-                    show_tooltip=False,
-                )
-            )
-
-            # Labeled at the right end of the curve line and slightly above it in the graph color
+            # Labeled at the right end of the curve line: ONLY the letter in the curve color
             saq_letter = ["A", "B", "C", "D", "E"][index]
             right_labels.append(
                 ftc.ChartAxisLabel(
-                    value=float(end_speed_int),
+                    value=round(raw_end_speed, 2),
                     label=ft.Container(
                         content=ft.Text(
-                            f"Stufe {saq_letter}",
-                            size=10,
+                            saq_letter,
+                            size=11,
                             weight=ft.FontWeight.BOLD,
                             color=curve_colors[index],
                         ),
                         offset=ft.Offset(0, -0.4),
-                        margin=ft.Margin(left=4, bottom=6, top=0, right=0),
+                        margin=ft.Margin(left=3, bottom=4, top=0, right=0),
                     ),
                 )
             )
@@ -1219,8 +1355,9 @@ class RinApp:
                 ftc.LineChartData(
                     points=points,
                     color=curve_colors[index],
-                    stroke_width=1.5,
+                    stroke_width=1.6,
                     curved=True,
+                    prevent_curve_over_shooting=True,
                     point=False,
                     selected_point=False,
                     selected_below_line=False,
@@ -1315,7 +1452,7 @@ class RinApp:
             right_axis=ftc.ChartAxis(
                 labels=right_labels,
                 show_labels=True,
-                label_size=55,
+                label_size=24,
                 label_spacing=1.0,
             ),
             horizontal_grid_lines=ftc.ChartGridLines(color="rgba(255,255,255,0.05)", width=1),
@@ -1945,51 +2082,7 @@ class RinApp:
             padding=14,
         )
 
-        permissions_group = ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.Row([
-                        ft.Icon(ft.Icons.SECURITY_ROUNDED, size=16, color=COLOR_PRIMARY),
-                        ft.Text("Android System-Berechtigungen & Akku", size=14, weight=ft.FontWeight.BOLD, color="#ffffff"),
-                    ], spacing=6),
-                    ft.Text(
-                        "Für zuverlässige Messungen im Hintergrund bei gesperrtem Bildschirm müssen der Standort auf 'Immer zulassen' und die Akku-Nutzung auf 'Nicht eingeschränkt' gesetzt sein.",
-                        size=11,
-                        color=COLOR_TEXT_MUTED,
-                    ),
-                    ft.Row(
-                        controls=[
-                            ft.Button(
-                                content=ft.Row([
-                                    ft.Icon(ft.Icons.BATTERY_ALERT_ROUNDED, size=15),
-                                    ft.Text("App-Einstellungen (Akku)", size=11, weight=ft.FontWeight.BOLD),
-                                ], spacing=6, tight=True),
-                                bgcolor="rgba(245, 158, 11, 0.15)",
-                                color="#f59e0b",
-                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
-                                on_click=lambda _: self._page.run_task(self.open_app_settings),
-                            ),
-                            ft.Button(
-                                content=ft.Row([
-                                    ft.Icon(ft.Icons.LOCATION_ON_ROUNDED, size=15),
-                                    ft.Text("Standort-Einstellungen", size=11, weight=ft.FontWeight.BOLD),
-                                ], spacing=6, tight=True),
-                                bgcolor="rgba(59, 130, 214, 0.15)",
-                                color=COLOR_PRIMARY,
-                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
-                                on_click=lambda _: self._page.run_task(self.open_location_settings),
-                            ),
-                        ],
-                        spacing=8,
-                        wrap=True,
-                    ),
-                ],
-                spacing=8,
-            ),
-            bgcolor=COLOR_CARD,
-            border_radius=6,
-            padding=14,
-        )
+        permissions_group = self.build_permissions_container(on_dashboard=False)
 
         api_group = ft.Container(
             content=ft.Column(
