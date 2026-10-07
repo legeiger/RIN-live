@@ -1,4 +1,4 @@
-# RIN08-Live
+# RIN-Live
 
 Android application for real-time journey tracking and SAQ (Stufe der Angebotsqualität) evaluation according to **RIN 2008** (FGSV guidelines for integrated network design).
 
@@ -66,7 +66,7 @@ A dedicated GitHub Actions workflow ([`.github/workflows/build-apk.yml`](.github
 1. Push your changes to the `flet` branch.
 2. In GitHub, navigate to **Actions** ➔ **Build Android APK**.
 3. Click **Run workflow**, select branch `flet`, and confirm.
-4. Download the compiled `RIN08-Live-release-apk` zip under **Artifacts** once the job finishes (~4–5 min).
+4. Download the compiled `RIN-Live-release-apk` zip under **Artifacts** once the job finishes (~4–5 min).
 
 ---
 
@@ -75,7 +75,7 @@ A dedicated GitHub Actions workflow ([`.github/workflows/build-apk.yml`](.github
 If building locally on a machine with Flutter SDK, Android SDK (API 34+), and JDK 17 installed:
 
 ```bash
-flet build apk --project rin08_live --product "RIN08-Live" --permissions location
+flet build apk --project rin --product "RIN-Live" --permissions location
 ```
 
 Output binary:
@@ -89,5 +89,5 @@ build/apk/app-release.apk
 
 1. **Sideload**: Transfer and install `app-release.apk` on device.
 2. **Background Location (Mandatory)**: 
-   Go to **Settings** ➔ **Apps** ➔ **RIN08-Live** ➔ **Permissions** ➔ **Location** ➔ Select **"Allow all the time"** (*Immer zulassen*).
+   Go to **Settings** ➔ **Apps** ➔ **RIN-Live** ➔ **Permissions** ➔ **Location** ➔ Select **"Allow all the time"** (*Immer zulassen*).
    *Required for continuous GPS logging via Foreground Service when screen is locked or app is minimized.*

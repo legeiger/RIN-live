@@ -1,5 +1,5 @@
 [project]
-name = "rin08-live"
+name = "rin-live"
 version = "0.8.1"
 description = "Real-time RIN 2008 journey tracking and SAQ evaluation."
 requires-python = ">=3.12"
@@ -36,12 +36,12 @@ dev = [
 ]
 
 [tool.flet.metadata]
-title = "RIN08 Live"
+title = "RIN-Live"
 
 [tool.flet]
 org = "de.unistuttgart.isv"
 project = "rin"
-product = "RIN08-Live"
+product = "RIN-Live"
 company = "ISV - Universität Stuttgart"
 copyright = "Copyright (C) 2026 ISV Universität Stuttgart"
 

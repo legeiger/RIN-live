@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: rin08-live-preview
+    container_name: rin-live-preview
     ports:
       - "8550:8550"
     volumes:

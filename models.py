@@ -171,7 +171,7 @@ class TripTracker:
         self.reset()
         if not session_id:
             stamp = datetime.fromtimestamp(start_ms / 1000).strftime("%Y%m%d_%H%M%S")
-            session_id = f"rin08-{stamp}"
+            session_id = f"rin-{stamp}"
         self.session_id = session_id
         self.started_ms = start_ms
         return self.session_id
@@ -342,8 +342,11 @@ class TripTracker:
 
 
 class SQLiteStore:
-    def __init__(self, filename: str = "rin08_live.sqlite3"):
-        self.path = Path(filename)
+    def __init__(self, filename: str = "rin_live.sqlite3"):
+        if filename == "rin_live.sqlite3" and not Path("rin_live.sqlite3").exists() and Path("rin08_live.sqlite3").exists():
+            self.path = Path("rin08_live.sqlite3")
+        else:
+            self.path = Path(filename)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:

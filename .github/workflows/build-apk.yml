@@ -73,27 +73,27 @@ jobs:
 
       - name: Build APK
         run: |
-          flet build apk --org de.unistuttgart.isv --project rin --product "RIN08-Live" --permissions location --yes
+          flet build apk --org de.unistuttgart.isv --project rin --product "RIN-Live" --permissions location --yes
 
       - name: Prepare APK File
         run: |
           mkdir -p dist
-          cp build/apk/*.apk dist/RIN08-Live.apk
+          cp build/apk/*.apk dist/RIN-Live.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v6
         with:
-          name: RIN08-Live-release-apk
-          path: dist/RIN08-Live.apk
+          name: RIN-Live-release-apk
+          path: dist/RIN-Live.apk
           if-no-files-found: error
 
       - name: Publish to GitHub Releases
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.create_release == 'true' || github.event.inputs.create_release == true))
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/RIN08-Live.apk
+          files: dist/RIN-Live.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'RIN08-Live (Release Build)' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'RIN-Live (Release Build)' }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           generate_release_notes: true
         env:

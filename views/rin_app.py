@@ -45,7 +45,7 @@ SAQ_COLORS = {
 
 
 class RinApp:
-    """Flet UI for RIN08-Live tracking and SAQ evaluation."""
+    """Flet UI for RIN-Live tracking and SAQ evaluation."""
 
     def __init__(self, page: ft.Page):
         self._page = page
@@ -59,7 +59,7 @@ class RinApp:
         self.active_tab = "dashboard"
         self.csv_visible = False
         self.last_position = None
-        self.logs = ["RIN08 Live bereit.", "SQLite-Speicher initialisiert."]
+        self.logs = ["RIN-Live bereit.", "SQLite-Speicher initialisiert."]
 
         # GPS background service
         self.geolocator = ftg.Geolocator(
@@ -68,8 +68,8 @@ class RinApp:
                 distance_filter=1,
                 interval_duration=int(self.settings.gps_interval * 1000),
                 foreground_notification_config=ftg.ForegroundNotificationConfiguration(
-                    notification_title="RIN08-Live",
-                    notification_text="RIN08-Live zeichnet deine Route auf.",
+                    notification_title="RIN-Live",
+                    notification_text="RIN-Live zeichnet deine Route auf.",
                 ),
             ),
             on_position_change=self._on_position_change,
@@ -212,7 +212,7 @@ class RinApp:
                 content=ft.Column(
                     controls=[
                         ft.Text(
-                            "RIN08-Live benötigt kontinuierlichen GPS-Zugriff im Hintergrund, um Verkehrsqualitätsstufen auch bei gesperrtem Smartphone lückenlos zu messen.",
+                            "RIN-Live benötigt kontinuierlichen GPS-Zugriff im Hintergrund, um Verkehrsqualitätsstufen auch bei gesperrtem Smartphone lückenlos zu messen.",
                             size=12,
                             color=COLOR_TEXT_PRIMARY,
                         ),
@@ -597,7 +597,7 @@ class RinApp:
             if not points:
                 self._log(f"Keine Datenpunkte für Fahrt {session_id} vorhanden.")
                 return
-            target_name = f"rin08_{session_id}"
+            target_name = f"rin_{session_id}"
             if fmt == "gpx":
                 file_text = self._gpx_for(points, session_id)
                 ext = "gpx"
@@ -612,7 +612,7 @@ class RinApp:
                 self._log("Keine Datenpunkte in Datenbank vorhanden.")
                 return
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            target_name = f"rin08_all_tracks_{stamp}"
+            target_name = f"rin_all_tracks_{stamp}"
             if fmt == "gpx":
                 file_text = self._gpx_for_all(all_pts)
                 ext = "gpx"
@@ -630,8 +630,8 @@ class RinApp:
                 share_file = ft.ShareFile.from_bytes(data_bytes, mime_type=mime, name=filename)
                 await self.share_service.share_files(
                     [share_file],
-                    title=f"RIN08 {ext.upper()} teilen",
-                    text=f"RIN08 Datenexport ({filename})",
+                    title=f"RIN-Live {ext.upper()} teilen",
+                    text=f"RIN-Live Datenexport ({filename})",
                 )
                 self._log(f"Teilen-Menü geöffnet für {filename}")
             except Exception as err:
@@ -709,7 +709,7 @@ class RinApp:
             for mode, curve in DEFAULT_PARAMS.items()
         }
         self.store.save_settings(self.settings)
-        self._log("SAQ-Parameter auf RIN-Standardwerte zurückgesetzt.")
+        self._log("SAQ-Parameter auf RIN 2008 Standardwerte zurückgesetzt.")
         self.render()
 
     def set_number(self, field_name: str):
@@ -900,7 +900,7 @@ class RinApp:
         if not target_url.endswith("/"):
             target_url += "/"
 
-        boundary = f"----RIN08Boundary{os.urandom(12).hex()}"
+        boundary = f"----RINBoundary{os.urandom(12).hex()}"
         body = bytearray()
 
         # Session ID field
@@ -908,7 +908,7 @@ class RinApp:
         body.extend(f'Content-Disposition: form-data; name="session_id"\r\n\r\n{session_id}\r\n'.encode("utf-8"))
 
         # CSV file payload
-        filename = f"rin08_{session_id}.csv"
+        filename = f"rin_{session_id}.csv"
         body.extend(f"--{boundary}\r\n".encode("utf-8"))
         body.extend(f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode("utf-8"))
         body.extend(b"Content-Type: text/csv; charset=utf-8\r\n\r\n")
@@ -921,7 +921,7 @@ class RinApp:
             data=bytes(body),
             headers={
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "User-Agent": "RIN08-Live/1.0",
+                "User-Agent": "RIN-Live/1.0",
                 "X-Session-ID": session_id,
             },
             method="POST",
@@ -1644,16 +1644,16 @@ class RinApp:
         return self._csv_for(all_pts)
 
     def _gpx_for(self, points: list[LocationPoint], session_id: str | None = None) -> str:
-        trk_name = session_id or (points[0].session_id if points else "RIN08_Track")
+        trk_name = session_id or (points[0].session_id if points else "RIN_Track")
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         lines = [
             '<?xml version="1.0" encoding="UTF-8"?>',
-            '<gpx version="1.1" creator="RIN08-Live - ISV Universitaet Stuttgart"',
+            '<gpx version="1.1" creator="RIN-Live - ISV Universitaet Stuttgart"',
             '     xmlns="http://www.topografix.com/GPX/1/1"',
             '     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"',
             '     xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">',
             '  <metadata>',
-            f'    <name>RIN08-Live Fahrt {trk_name}</name>',
+            f'    <name>RIN-Live Fahrt {trk_name}</name>',
             f'    <time>{now_iso}</time>',
             '  </metadata>',
             '  <trk>',
@@ -1683,12 +1683,12 @@ class RinApp:
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         lines = [
             '<?xml version="1.0" encoding="UTF-8"?>',
-            '<gpx version="1.1" creator="RIN08-Live - ISV Universitaet Stuttgart"',
+            '<gpx version="1.1" creator="RIN-Live - ISV Universitaet Stuttgart"',
             '     xmlns="http://www.topografix.com/GPX/1/1"',
             '     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"',
             '     xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">',
             '  <metadata>',
-            '    <name>RIN08-Live Gesamtexport</name>',
+            '    <name>RIN-Live Gesamtexport</name>',
             f'    <time>{now_iso}</time>',
             '  </metadata>',
         ]
@@ -1855,7 +1855,8 @@ class RinApp:
         saq_group = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("SAQ Parameter (Kurven)", size=14, weight=ft.FontWeight.BOLD, color="#ffffff"),
+                    ft.Text("SAQ Parameter (RIN 2008 Kurven)", size=14, weight=ft.FontWeight.BOLD, color="#ffffff"),
+                    ft.Text("Grenzfunktions-Parameter (a, b, c) gemäß RIN (Ausgabe 2008)", size=11, color=COLOR_TEXT_MUTED),
                     *param_rows,
                     ft.Container(height=6),
                     ft.Row(
@@ -2060,7 +2061,7 @@ class RinApp:
         header_bar = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("RIN08-Live", size=22, weight=ft.FontWeight.BOLD, color="#ffffff"),
+                    ft.Text("RIN-Live", size=22, weight=ft.FontWeight.BOLD, color="#ffffff"),
                     ft.Row(
                         controls=[
                             self._tab_button("Dashboard", "dashboard"),

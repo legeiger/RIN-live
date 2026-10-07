@@ -3,7 +3,7 @@ from views.rin_app import RinApp
 
 
 def main(page: ft.Page):
-    page.title = "RIN08-Live"
+    page.title = "RIN-Live"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#0d0d1a"
     page.padding = 0
