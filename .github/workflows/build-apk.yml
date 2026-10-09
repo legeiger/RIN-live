@@ -69,9 +69,21 @@ jobs:
                   print('Successfully patched', f)
           "
 
-      - name: Build APK
+      - name: Configure Gradle and Build Environment
         run: |
-          flet build apk --org de.unistuttgart.isv --project rin --product "RIN-Live" --permissions location --build-version 0.9.0 --yes
+          mkdir -p ~/.gradle
+          cat << 'EOF' > ~/.gradle/gradle.properties
+          org.gradle.parallel=false
+          org.gradle.workers.max=1
+          org.gradle.vfs.watch=false
+          EOF
+          mkdir -p ~/.flet/cache
+
+      - name: Build APK
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
+        run: |
+          flet build apk --org de.unistuttgart.isv --project rin --product "RIN-Live" --permissions location --build-version 0.9.0 --arch arm64-v8a armeabi-v7a --yes
 
       - name: Prepare APK File
         run: |
