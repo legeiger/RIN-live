@@ -70,12 +70,17 @@ class RinApp:
                 interval_duration=int(self.settings.gps_interval * 1000),
                 foreground_notification_config=ftg.ForegroundNotificationConfiguration(
                     notification_title="RIN-Live",
-                    notification_text="RIN-Live zeichnet deine Route auf.",
+                    notification_text="RIN-Live ist bereit.",
+                    notification_channel_name="RIN-Live Aufzeichnung",
+                    notification_enable_wake_lock=True,
+                    notification_set_ongoing=False,
                 ),
             ),
             on_position_change=self._on_position_change,
             on_error=self._on_location_error,
         )
+        self._last_notification_title: str = ""
+        self._last_notification_text: str = ""
         self.file_picker = ft.FilePicker()
         self.share_service = ft.Share()
         self.clipboard = ft.Clipboard()
@@ -146,8 +151,66 @@ class RinApp:
     async def _clock(self) -> None:
         while True:
             await asyncio.sleep(1)
-            if self.recording_state == "RECORDING" and self.active_tab == "dashboard":
-                self.render()
+            if self.recording_state == "RECORDING":
+                self._update_notification()
+                if self.active_tab == "dashboard":
+                    self.render()
+
+    def _update_notification(self) -> None:
+        try:
+            if not hasattr(self, "geolocator") or self.geolocator is None:
+                return
+
+            mode = self.settings.mode or "IOE"
+            if self.recording_state == "RECORDING":
+                metrics = self.tracker.metrics
+                saq = self.tracker.current_saq()
+                title = f"RIN-Live ({mode})"
+                text = (
+                    f"Distanz: {metrics.total_distance_km:.1f} km, "
+                    f"Luftlinie: {metrics.straight_distance_km:.1f} km, "
+                    f"V: {metrics.current_speed_kmh:.1f} km/h, "
+                    f"VLuft: {metrics.straight_speed_kmh:.1f} km/h, "
+                    f"SAQ: {saq.letter} ({mode})"
+                )
+                ongoing = True
+            elif self.recording_state == "PAUSED":
+                metrics = self.tracker.metrics
+                saq = self.tracker.current_saq()
+                title = f"RIN-Live ({mode}) · Pausiert"
+                text = (
+                    f"Distanz: {metrics.total_distance_km:.1f} km, "
+                    f"Luftlinie: {metrics.straight_distance_km:.1f} km, "
+                    f"V: 0.0 km/h, "
+                    f"VLuft: {metrics.straight_speed_kmh:.1f} km/h, "
+                    f"SAQ: {saq.letter} ({mode})"
+                )
+                ongoing = True
+            else:
+                title = "RIN-Live"
+                text = "RIN-Live ist bereit."
+                ongoing = False
+
+            if title == self._last_notification_title and text == self._last_notification_text:
+                return
+            self._last_notification_title = title
+            self._last_notification_text = text
+
+            self.geolocator.configuration = ftg.GeolocatorAndroidConfiguration(
+                accuracy=ftg.GeolocatorPositionAccuracy.BEST_FOR_NAVIGATION,
+                distance_filter=1,
+                interval_duration=int(self.settings.gps_interval * 1000),
+                foreground_notification_config=ftg.ForegroundNotificationConfiguration(
+                    notification_title=title,
+                    notification_text=text,
+                    notification_channel_name="RIN-Live Aufzeichnung",
+                    notification_enable_wake_lock=True,
+                    notification_set_ongoing=ongoing,
+                ),
+            )
+            self.geolocator.update()
+        except Exception:
+            pass
 
     def _on_location_error(self, event) -> None:
         err_msg = getattr(event, "data", str(event))
@@ -176,6 +239,7 @@ class RinApp:
             self._log(note)
         if point:
             self.store.add_point(point)
+            self._update_notification()
             self._log(
                 f"GPS Tick: {point.total_distance_km:.2f} km, V={point.instant_speed_kmh:.1f} km/h, SAQ {point.saq}"
             )
@@ -250,9 +314,9 @@ class RinApp:
         if not is_granted:
             instructions.append(
                 ft.Text(
-                    "Für lückenlose Messung bei gesperrtem Bildschirm bitte einrichten:\n"
-                    "1. Standort auf 'Immer zulassen' (Allow all the time) setzen.\n"
-                    "2. Akku-Nutzung dieser App auf 'Nicht eingeschränkt' (Unrestricted) setzen.",
+                    "Für lückenlose Messung bei gesperrtem Bildschirm in den App-Einstellungen:\n"
+                    "• Berechtigungen ➔ Standort auf 'Immer zulassen' setzen\n"
+                    "• Akkunutzung auf 'Nicht eingeschränkt' setzen",
                     size=10.5,
                     color="rgba(255, 255, 255, 0.85)",
                 )
@@ -270,21 +334,11 @@ class RinApp:
             controls=[
                 ft.Button(
                     content=ft.Row([
-                        ft.Icon(ft.Icons.LOCATION_ON_ROUNDED, size=14),
-                        ft.Text("Standort 'Immer zulassen'", size=11, weight=ft.FontWeight.BOLD),
+                        ft.Icon(ft.Icons.SETTINGS_ROUNDED, size=14),
+                        ft.Text("App-Einstellungen öffnen", size=11, weight=ft.FontWeight.BOLD),
                     ], spacing=5, tight=True),
                     bgcolor="rgba(59, 130, 214, 0.2)",
                     color=COLOR_PRIMARY,
-                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
-                    on_click=lambda _: self._page.run_task(self.open_location_settings),
-                ),
-                ft.Button(
-                    content=ft.Row([
-                        ft.Icon(ft.Icons.BATTERY_ALERT_ROUNDED, size=14),
-                        ft.Text("Akku 'Nicht eingeschränkt'", size=11, weight=ft.FontWeight.BOLD),
-                    ], spacing=5, tight=True),
-                    bgcolor="rgba(245, 158, 11, 0.2)",
-                    color="#f59e0b",
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
                     on_click=lambda _: self._page.run_task(self.open_app_settings),
                 ),
@@ -330,13 +384,13 @@ class RinApp:
             modal=True,
             title=ft.Row([
                 ft.Icon(ft.Icons.LOCATION_ON_ROUNDED, color=COLOR_PRIMARY, size=24),
-                ft.Text("Hintergrund-GPS & Akku", size=18, weight=ft.FontWeight.BOLD),
+                ft.Text("Hintergrund-Aufzeichnung", size=18, weight=ft.FontWeight.BOLD),
             ], spacing=8),
             content=ft.Container(
                 content=ft.Column(
                     controls=[
                         ft.Text(
-                            "RIN-Live benötigt kontinuierlichen GPS-Zugriff im Hintergrund, um Verkehrsqualitätsstufen auch bei gesperrtem Smartphone lückenlos zu messen.",
+                            "RIN-Live benötigt kontinuierlichen GPS-Zugriff im Hintergrund, um auch bei gesperrtem Smartphone Standortdaten zu erfassen.",
                             size=12,
                             color=COLOR_TEXT_PRIMARY,
                         ),
@@ -346,61 +400,38 @@ class RinApp:
                                 controls=[
                                     ft.Row(
                                         controls=[
-                                            ft.Icon(ft.Icons.BATTERY_ALERT_ROUNDED, color="#f59e0b", size=18),
-                                            ft.Text("1. Akku-Optimierung deaktivieren:", size=12, weight=ft.FontWeight.BOLD, color="#f59e0b"),
+                                            ft.Icon(ft.Icons.SETTINGS_ROUNDED, color=COLOR_PRIMARY, size=18),
+                                            ft.Text("In den Android App-Einstellungen einrichten:", size=12, weight=ft.FontWeight.BOLD, color="#ffffff"),
                                         ],
                                         spacing=6,
                                     ),
                                     ft.Text(
-                                        "Android beendet Apps im Hintergrund bei Akkusparmodus. Setze unter 'Akku' die Nutzung auf 'Nicht eingeschränkt' (Unrestricted).",
+                                        "1. Berechtigungen ➔ Standort auf 'Immer zulassen'\n"
+                                        "2. Akku / Akkunutzung auf 'Nicht eingeschränkt'",
                                         size=11,
                                         color="rgba(255, 255, 255, 0.9)",
                                     ),
-                                    ft.Container(height=2),
+                                    ft.Container(height=4),
                                     ft.Button(
                                         content=ft.Row([
-                                            ft.Icon(ft.Icons.SETTINGS_ROUNDED, size=15),
-                                            ft.Text("Android-Einstellungen öffnen", size=11, weight=ft.FontWeight.BOLD),
+                                            ft.Icon(ft.Icons.OPEN_IN_NEW_ROUNDED, size=14),
+                                            ft.Text("App-Einstellungen öffnen", size=11, weight=ft.FontWeight.BOLD),
                                         ], spacing=6, tight=True),
-                                        bgcolor="rgba(245, 158, 11, 0.2)",
-                                        color="#f59e0b",
+                                        bgcolor="rgba(59, 130, 214, 0.25)",
+                                        color=COLOR_PRIMARY,
                                         on_click=lambda _: self._page.run_task(self.open_app_settings),
                                     ),
                                 ],
-                                spacing=4,
-                            ),
-                            bgcolor="rgba(245, 158, 11, 0.12)",
-                            border=ft.Border.all(1, "rgba(245, 158, 11, 0.3)"),
-                            border_radius=8,
-                            padding=10,
-                        ),
-                        ft.Container(height=4),
-                        ft.Container(
-                            content=ft.Column(
-                                controls=[
-                                    ft.Row(
-                                        controls=[
-                                            ft.Icon(ft.Icons.SECURITY_ROUNDED, color=COLOR_PRIMARY, size=18),
-                                            ft.Text("2. Standort: 'Immer zulassen':", size=12, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
-                                        ],
-                                        spacing=6,
-                                    ),
-                                    ft.Text(
-                                        "Wähle bei der nachfolgenden Android-Berechtigungsabfrage unbedingt 'Immer zulassen' (Allow all the time).",
-                                        size=11,
-                                        color="rgba(255, 255, 255, 0.9)",
-                                    ),
-                                ],
-                                spacing=4,
+                                spacing=6,
                             ),
                             bgcolor="rgba(59, 130, 214, 0.12)",
                             border=ft.Border.all(1, "rgba(59, 130, 214, 0.3)"),
                             border_radius=8,
-                            padding=10,
+                            padding=12,
                         ),
                         ft.Container(height=4),
                         ft.Text(
-                            "Deine Daten verbleiben lokal auf deinem Gerät und werden nur auf Wunsch gespendet.",
+                            "Daten verbleiben lokal auf diesem Gerät und können nur manuell übertragen werden. Mehr dazu im Reiter Daten.",
                             size=10,
                             color=COLOR_TEXT_MUTED,
                         ),
@@ -413,7 +444,7 @@ class RinApp:
             actions=[
                 ft.TextButton("Abbrechen", on_click=on_cancel),
                 ft.FilledButton(
-                    content=ft.Text("Berechtigung erteilen & Starten"),
+                    content=ft.Text("Aufzeichnung starten"),
                     bgcolor=COLOR_PRIMARY,
                     color="#ffffff",
                     on_click=lambda e: self._page.run_task(on_consent, e),
@@ -444,6 +475,7 @@ class RinApp:
         session_id = self.tracker.start(start_time)
         self.store.start_session(session_id, self.settings.mode)
         self.recording_state = "RECORDING"
+        self._update_notification()
         self._log(f"Aufzeichnung gestartet: {session_id} (2s Intervall, 5m Genauigkeit).")
         try:
             position = await self.geolocator.get_current_position()
@@ -457,6 +489,7 @@ class RinApp:
         if self.recording_state == "RECORDING":
             self.recording_state = "PAUSED"
             self.tracker.pause(int(time.time() * 1000))
+            self._update_notification()
             self._log(f"Aufzeichnung pausiert: {self.tracker.session_id}")
             self.render()
 
@@ -464,6 +497,7 @@ class RinApp:
         if self.recording_state == "PAUSED":
             self.recording_state = "RECORDING"
             self.tracker.resume(int(time.time() * 1000))
+            self._update_notification()
             self._log(f"Aufzeichnung fortgesetzt: {self.tracker.session_id}")
             self.render()
 
@@ -498,6 +532,7 @@ class RinApp:
     def stop_recording(self) -> None:
         session_id = self.tracker.session_id
         self.recording_state = "IDLE"
+        self._update_notification()
         self._log(f"Aufzeichnung beendet und gespeichert: {session_id}")
         self.render()
 
@@ -576,6 +611,7 @@ class RinApp:
             self.store.clear_session(self.tracker.session_id)
         self.tracker.reset()
         self.recording_state = "IDLE"
+        self._update_notification()
         self.csv_visible = False
         self._log("Aufzeichnung und Messdaten zurückgesetzt.")
         self.render()
@@ -861,6 +897,7 @@ class RinApp:
 
     def set_mode(self, event) -> None:
         self.settings.mode = event.control.value
+        self._update_notification()
         self.render()
 
     def set_parameter(self, key: str, index: int):

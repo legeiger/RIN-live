@@ -63,9 +63,9 @@ flet run --web --port 8550
 
 A dedicated GitHub Actions workflow ([`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml)) handles Flutter SDK, Android SDK, and Java dependencies in a disposable runner.
 
-1. Push your changes to the `flet` branch.
+1. Push your changes to the `main` branch.
 2. In GitHub, navigate to **Actions** ➔ **Build Android APK**.
-3. Click **Run workflow**, select branch `flet`, and confirm.
+3. Click **Run workflow**, select branch `main`, and confirm.
 4. Download the compiled `RIN-Live-release-apk` zip under **Artifacts** once the job finishes (~4–5 min).
 
 ---
