@@ -10,48 +10,51 @@
         letter-spacing: 3px;
         fill: #ffffff;
       }
-      .axis-line { stroke: #2a3444; stroke-width: 3.5; stroke-dasharray: 6 8; stroke-linecap: round; }
+      .axis-line { stroke: #2a3444; stroke-width: 4; stroke-dasharray: 6 8; stroke-linecap: round; }
       .graph-line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-      .curve-top { stroke: #10b981; stroke-width: 14; }
-      .curve-mid { stroke: #f59e0b; stroke-width: 14; }
-      .curve-bot { stroke: #ef4444; stroke-width: 14; }
+      .curve-top { stroke: #10b981; stroke-width: 16; }
+      .curve-mid { stroke: #f59e0b; stroke-width: 16; }
+      .curve-bot { stroke: #ef4444; stroke-width: 16; }
       .origin-node { fill: #475569; }
     </style>
   </defs>
 
-  <!-- Hintergrund (Full Canvas für maximale Größenausnutzung im Launcher) -->
+  <!-- Hintergrund (Full Canvas für nahtlose Darstellung in allen Launcher-Masken) -->
   <g id="background">
     <rect class="bg" width="500" height="500" />
   </g>
 
-  <!-- Branding / Logo-Schriftzug (Maximale Größe) -->
-  <g id="logo-branding">
-    <text class="brand-text" x="32" y="152">RIN</text>
-  </g>
+  <!-- Foreground Content skaliert mit Safe-Zone-Rand für Android Launcher Masken (Squircle, Circle, Rounded Rect) -->
+  <g id="icon-content" transform="translate(250, 250) scale(0.52) translate(-250, -250)">
+    <!-- Branding / Logo-Schriftzug -->
+    <g id="logo-branding">
+      <text class="brand-text" x="32" y="152">RIN</text>
+    </g>
 
-  <!-- Koordinatensystem / Basislinien -->
-  <g id="axes">
-    <line class="axis-line" x1="32" y1="468" x2="468" y2="468" />
-    <line class="axis-line" x1="32" y1="468" x2="32" y2="185" />
-  </g>
+    <!-- Koordinatensystem / Basislinien -->
+    <g id="axes">
+      <line class="axis-line" x1="32" y1="468" x2="468" y2="468" />
+      <line class="axis-line" x1="32" y1="468" x2="32" y2="185" />
+    </g>
 
-  <!-- Degressiv ansteigende Graphen (f'(x) > 0, f''(x) < 0) -->
-  <g id="degressive-graphs">
-    <!-- Oberer Graph: Grün (Ziel: y = 195) -->
-    <path id="graph-green" class="graph-line curve-top" d="M 32 468 C 115 230, 260 195, 468 195" />
-    
-    <!-- Mittlerer Graph: Bernstein/Gelb (Ziel: y = 275) -->
-    <path id="graph-amber" class="graph-line curve-mid" d="M 32 468 C 125 300, 270 275, 468 275" />
-    
-    <!-- Unterer Graph: Rot (Ziel: y = 355) -->
-    <path id="graph-red" class="graph-line curve-bot" d="M 32 468 C 135 370, 280 355, 468 355" />
-  </g>
+    <!-- Degressiv ansteigende Graphen (f'(x) > 0, f''(x) < 0) -->
+    <g id="degressive-graphs">
+      <!-- Oberer Graph: Grün (Ziel: y = 195) -->
+      <path id="graph-green" class="graph-line curve-top" d="M 32 468 C 115 230, 260 195, 468 195" />
+      
+      <!-- Mittlerer Graph: Bernstein/Gelb (Ziel: y = 275) -->
+      <path id="graph-amber" class="graph-line curve-mid" d="M 32 468 C 125 300, 270 275, 468 275" />
+      
+      <!-- Unterer Graph: Rot (Ziel: y = 355) -->
+      <path id="graph-red" class="graph-line curve-bot" d="M 32 468 C 135 370, 280 355, 468 355" />
+    </g>
 
-  <!-- Graph-Endpunkte & Ursprungspunkt -->
-  <g id="data-nodes">
-    <circle class="origin-node" cx="32" cy="468" r="8" />
-    <circle cx="468" cy="195" r="10" fill="#10b981" />
-    <circle cx="468" cy="275" r="10" fill="#f59e0b" />
-    <circle cx="468" cy="355" r="10" fill="#ef4444" />
+    <!-- Graph-Endpunkte & Ursprungspunkt -->
+    <g id="data-nodes">
+      <circle class="origin-node" cx="32" cy="468" r="9" />
+      <circle cx="468" cy="195" r="12" fill="#10b981" />
+      <circle cx="468" cy="275" r="12" fill="#f59e0b" />
+      <circle cx="468" cy="355" r="12" fill="#ef4444" />
+    </g>
   </g>
 </svg>
