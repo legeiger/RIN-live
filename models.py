@@ -6,17 +6,65 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import json
 import math
+import os
 from pathlib import Path
+import re
 import sqlite3
+import subprocess
+import sys
 from typing import Any
 
-from geopy.distance import geodesic
+try:
+    from geopy.distance import geodesic
+except ImportError:
+    geodesic = None  # type: ignore[assignment]
 
 DEFAULT_PARAMS = {
     "PKW": {"a": [0.18, 0.21, 0.25, 0.31, 0.39], "b": [-0.676] * 5, "c": [0.0083, 0.0089, 0.0096, 0.0104, 0.0115]},
     "OEV": {"a": [0.19, 0.22, 0.26, 0.32, 0.40], "b": [-0.5] * 5, "c": [0.0031, 0.0037, 0.0044, 0.0052, 0.0063]},
     "IOE": {"a": [0.18, 0.21, 0.25, 0.31, 0.39], "b": [-0.59] * 5, "c": [0.0069, 0.0075, 0.0082, 0.0090, 0.0100]},
 }
+
+# Known train / rail Wi-Fi SSID patterns (case-insensitive substring match).
+# Detects train environment by SSID visibility alone (no connection required).
+BAHN_WIFI_KEYWORDS: tuple[str, ...] = (
+    "wifionice",
+    "wifi on ice",
+    "wifi@db",
+    "db free wifi",
+    "db_free_wifi",
+    "db wifi",
+    "bahn",
+    "ice_portal",
+    "iceportal",
+    "oebb",
+    "öbb",
+    "sbb-free",
+    "sbb free",
+    "westbahn",
+    "flixtrain",
+    "regioguide",
+    "cdwifi",
+    "mavstart",
+    "thalysnet",
+    "eurostar",
+    "tgv inoui",
+    "bwegt",
+    "metronom",
+    "agilis",
+    "odeg",
+    "erixx",
+    "vlexx",
+    "national express",
+    "go-ahead",
+    "arverio",
+)
+
+BAHN_BASE_ACCURACY_M: float = 50.0
+MAX_FALLBACK_ACCURACY_M: float = 300.0
+ACCURACY_TIMEOUT_START_MS: int = 30_000
+ACCURACY_STEP_INTERVAL_MS: int = 15_000
+ACCURACY_STEPS_M: tuple[float, ...] = (25.0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0)
 
 
 @dataclass
@@ -81,27 +129,105 @@ class TripMetrics:
     start_time_ms: int = 0
     moving_time_ms: int = 0
 
+    @property
+    def detour_factor(self) -> float:
+        return calc_detour_factor(self.total_distance_km, self.straight_distance_km)
+
+
+def calc_detour_factor(total_distance_km: float, straight_distance_km: float) -> float:
+    """Calculates detour factor (Fahrtdistanz / Luftliniendistanz), never < 1.0."""
+    if straight_distance_km <= 1e-6:
+        return 1.0
+    return max(1.0, float(total_distance_km) / float(straight_distance_km))
+
+
+def match_bahn_wifi_ssid(ssids: list[str] | tuple[str, ...]) -> str | None:
+    """Returns the first visible Wi-Fi SSID matching known train/rail networks, or None."""
+    for raw_ssid in ssids:
+        if not raw_ssid:
+            continue
+        cleaned = str(raw_ssid).strip().strip('"')
+        if not cleaned or cleaned.lower() == "<unknown ssid>":
+            continue
+        low = cleaned.lower()
+        for keyword in BAHN_WIFI_KEYWORDS:
+            if keyword in low:
+                return cleaned
+    return None
+
+
+def scan_local_wifi_ssids() -> list[str]:
+    """Fallback local Wi-Fi SSID scanner for desktop/Linux/Android environments.
+    Detects visible SSIDs in range without requiring an active connection.
+    """
+    ssids: list[str] = []
+    try:
+        if sys.platform.startswith("win"):
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            res = subprocess.run(
+                ["netsh", "wlan", "show", "networks"],
+                capture_output=True,
+                text=True,
+                timeout=2.5,
+                creationflags=creationflags,
+                check=False,
+            )
+            for line in (res.stdout or "").splitlines():
+                m = re.match(r"^\s*SSID\s+\d+\s*:\s*(.+)$", line)
+                if m:
+                    val = m.group(1).strip()
+                    if val and val not in ssids:
+                        ssids.append(val)
+        elif sys.platform.startswith("linux"):
+            for cmd in (
+                ["nmcli", "-t", "-f", "SSID", "dev", "wifi"],
+                ["cmd", "wifi", "list-scan-results"],
+            ):
+                try:
+                    res = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=2.0,
+                        check=False,
+                    )
+                    if res.returncode == 0 and res.stdout:
+                        for line in res.stdout.splitlines():
+                            s = line.strip()
+                            if s and s != "--" and s not in ssids:
+                                ssids.append(s)
+                        if ssids:
+                            break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return ssids
+
 
 def wgs84_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculates geodesic distance in meters on the WGS-84 reference ellipsoid
-    using geopy (Karney's geodesic algorithm).
+    using geopy (Karney's geodesic algorithm), with pure-Python fallback.
     """
     if None in (lat1, lon1, lat2, lon2):
         return 0.0
     if lat1 == lat2 and lon1 == lon2:
         return 0.0
-    return float(geodesic((lat1, lon1), (lat2, lon2)).meters)
+    if geodesic is not None:
+        return float(geodesic((lat1, lon1), (lat2, lon2)).meters)
+    r_m = 6_371_008.8
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    return 2.0 * r_m * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
 
 
 def calc_distance_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
     """Calculates geodesic distance in kilometers on the WGS-84 reference ellipsoid
-    using geopy (Karney's geodesic algorithm).
+    using geopy (Karney's geodesic algorithm), with pure-Python fallback.
     """
-    if None in (lat_a, lon_a, lat_b, lon_b):
-        return 0.0
-    if lat_a == lat_b and lon_a == lon_b:
-        return 0.0
-    return float(geodesic((lat_a, lon_a), (lat_b, lon_b)).km)
+    return wgs84_distance_m(lat_a, lon_a, lat_b, lon_b) / 1000.0
 
 
 def haversine_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
@@ -146,6 +272,8 @@ def timestamp_ms(value: Any) -> int:
 class TripTracker:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.bahn_mode: bool = False
+        self.bahn_ssid: str | None = None
         self.reset()
 
     def reset(self) -> None:
@@ -159,6 +287,7 @@ class TripTracker:
         self.last_latitude: float | None = None
         self.last_longitude: float | None = None
         self.last_timestamp_ms = 0
+        self.last_valid_fix_ms = 0
         self.last_speed_kmh = 0.0
         self.total_distance_km = 0.0
         self.straight_distance_km = 0.0
@@ -166,6 +295,74 @@ class TripTracker:
         self.straight_speed_kmh = 0.0
         self.moving_time_ms = 0
         self.window: list[tuple[float, float, int]] = []
+        self.current_tolerance_m: float = self.base_accuracy_m
+
+    @property
+    def base_accuracy_m(self) -> float:
+        """Normal target accuracy, or 50 m when ICE/Bahn mode is active."""
+        user_min = max(1.0, float(getattr(self.settings, "min_accuracy", 5.0)))
+        if self.bahn_mode:
+            return max(user_min, BAHN_BASE_ACCURACY_M)
+        return user_min
+
+    @property
+    def effective_accuracy_m(self) -> float:
+        """Currently active accuracy threshold (including step-up tolerance up to 300 m)."""
+        return max(self.base_accuracy_m, self.current_tolerance_m)
+
+    @property
+    def detour_factor(self) -> float:
+        """Detour factor (Fahrtdistanz / Luftliniendistanz), clamped to >= 1.0."""
+        return calc_detour_factor(self.total_distance_km, self.straight_distance_km)
+
+    def set_bahn_mode(self, active: bool, ssid: str | None = None) -> str | None:
+        """Switches ICE/Bahn mode on or off and returns a short log entry on state transition."""
+        if active and not self.bahn_mode:
+            self.bahn_mode = True
+            self.bahn_ssid = ssid
+            self.current_tolerance_m = max(self.current_tolerance_m, self.base_accuracy_m)
+            ssid_label = f"'{ssid}'" if ssid else "Bahn-WLAN"
+            return f"ICE/Bahn-Modus aktiv (WLAN erkannt: {ssid_label}) – Toleranz bis {self.base_accuracy_m:.0f} m."
+        if not active and self.bahn_mode:
+            self.bahn_mode = False
+            self.bahn_ssid = None
+            if self.current_tolerance_m <= BAHN_BASE_ACCURACY_M:
+                self.current_tolerance_m = self.base_accuracy_m
+            return f"ICE/Bahn-Modus beendet – Standard-Toleranz ({self.base_accuracy_m:.0f} m) aktiv."
+        if active and ssid:
+            self.bahn_ssid = ssid
+        return None
+
+    def update_accuracy_tolerance(self, now_ms: int) -> str | None:
+        """Steps up the accuracy tolerance up to 300 m if no location was accepted for >= 30 s."""
+        if self.is_paused:
+            return None
+        ref_ms = self.last_valid_fix_ms or self.started_ms
+        if not ref_ms or now_ms <= ref_ms:
+            return None
+
+        wait_ms = now_ms - ref_ms
+        if wait_ms < ACCURACY_TIMEOUT_START_MS:
+            return None
+
+        base_acc = self.base_accuracy_m
+        steps_above = [s for s in ACCURACY_STEPS_M if s > base_acc]
+        if not steps_above:
+            target_acc = max(base_acc, MAX_FALLBACK_ACCURACY_M)
+        else:
+            step_idx = min(
+                len(steps_above) - 1,
+                int((wait_ms - ACCURACY_TIMEOUT_START_MS) // ACCURACY_STEP_INTERVAL_MS),
+            )
+            target_acc = min(MAX_FALLBACK_ACCURACY_M, steps_above[step_idx])
+
+        if target_acc > self.current_tolerance_m:
+            self.current_tolerance_m = target_acc
+            return (
+                f"Kein Standort seit {wait_ms // 1000}s: "
+                f"Genauigkeitsfilter schrittweise auf {self.current_tolerance_m:.0f} m erhöht."
+            )
+        return None
 
     def start(self, start_ms: int, session_id: str | None = None) -> str:
         self.reset()
@@ -174,6 +371,8 @@ class TripTracker:
             session_id = f"rin-{stamp}"
         self.session_id = session_id
         self.started_ms = start_ms
+        self.last_valid_fix_ms = start_ms
+        self.current_tolerance_m = self.base_accuracy_m
         return self.session_id
 
     def pause(self, current_ms: int) -> None:
@@ -186,6 +385,7 @@ class TripTracker:
             self.pause_start_ms = 0
         self.is_paused = False
         self.last_timestamp_ms = current_ms
+        self.last_valid_fix_ms = current_ms
 
     def effective_elapsed_ms(self, current_ms: int) -> int:
         if not self.started_ms:
@@ -209,6 +409,7 @@ class TripTracker:
         self.last_latitude = last.latitude
         self.last_longitude = last.longitude
         self.last_timestamp_ms = last.timestamp_ms
+        self.last_valid_fix_ms = last.timestamp_ms
         self.last_speed_kmh = last.instant_speed_kmh
         self.total_distance_km = last.total_distance_km
         self.straight_distance_km = last.straight_distance_km
@@ -238,8 +439,9 @@ class TripTracker:
         latitude: float,
         longitude: float,
         accuracy: float | None = None,
-        accuracy_m: float | None = None,
         timestamp: int | None = None,
+        *,
+        accuracy_m: float | None = None,
         timestamp_ms: int | None = None,
     ) -> tuple[LocationPoint | None, str]:
         if self.is_paused:
@@ -248,16 +450,34 @@ class TripTracker:
         actual_acc = accuracy_m if accuracy_m is not None else (accuracy or 0.0)
         actual_ts = timestamp_ms if timestamp_ms is not None else (timestamp or int(datetime.now().timestamp() * 1000))
 
-        if actual_acc > self.settings.min_accuracy:
-            return None, f"Punkt verworfen: Genauigkeit {actual_acc:.1f} m"
+        # Check if 30s+ have elapsed without a valid fix and step up accuracy tolerance up to 300 m
+        step_note = self.update_accuracy_tolerance(actual_ts)
+        effective_limit = self.effective_accuracy_m
+
+        if actual_acc > effective_limit:
+            reject_msg = f"Punkt verworfen: Genauigkeit {actual_acc:.1f} m (> {effective_limit:.0f} m)"
+            if step_note:
+                return None, f"{step_note} | {reject_msg}"
+            return None, reject_msg
+
+        # Determine if an accurate fix allows resetting an elevated fallback tolerance
+        base_acc = self.base_accuracy_m
+        tolerance_reset_note = ""
+        if actual_acc <= base_acc and self.current_tolerance_m > base_acc:
+            self.current_tolerance_m = base_acc
+            tolerance_reset_note = f" (Genauer Standort {actual_acc:.1f} m: Toleranz zurück auf {base_acc:.0f} m)"
 
         if self.start_latitude is None:
             self.start_latitude = self.last_latitude = latitude
             self.start_longitude = self.last_longitude = longitude
             self.last_timestamp_ms = actual_ts
+            self.last_valid_fix_ms = actual_ts
             self.last_speed_kmh = 0.0
             self.window = [(latitude, longitude, actual_ts)]
-            return None, "Startpunkt übernommen"
+            msg = f"Startpunkt übernommen{tolerance_reset_note}"
+            if step_note:
+                msg = f"{step_note} | {msg}"
+            return None, msg
 
         elapsed_ms = actual_ts - self.last_timestamp_ms
         if elapsed_ms <= 0:
@@ -276,9 +496,15 @@ class TripTracker:
             return None, f"GPS-Spike verworfen: {instant_speed:.1f} km/h"
 
         # 2. Acceleration / Jump Rejection (Multipath GPS jump)
-        # Rejects non-physical sudden teleport jumps (> 8 m/s² acceleration at high speeds)
+        # Accounts for coarse accuracy radius when in ICE/Bahn or fallback tolerance mode
         if self.last_speed_kmh > 0 and instant_speed > 25.0 and elapsed_s > 0:
-            delta_v_m_s = abs(instant_speed - self.last_speed_kmh) / 3.6
+            uncert_m = max(0.0, actual_acc - 5.0)
+            excess_dist_m = max(0.0, step_dist_m - uncert_m)
+            effective_v_kmh = (excess_dist_m / 1000.0) / elapsed_hours if elapsed_hours > 0 else 0.0
+            if effective_v_kmh > self.settings.last_speed_kmh if hasattr(self.settings, "last_speed_kmh") else effective_v_kmh > self.last_speed_kmh:
+                delta_v_m_s = abs(effective_v_kmh - self.last_speed_kmh) / 3.6
+            else:
+                delta_v_m_s = 0.0
             accel = delta_v_m_s / elapsed_s
             if accel > 8.0:
                 return None, f"GPS-Sprung verworfen: Beschleunigung {accel:.1f} m/s²"
@@ -311,6 +537,7 @@ class TripTracker:
         self.last_latitude = latitude
         self.last_longitude = longitude
         self.last_timestamp_ms = actual_ts
+        self.last_valid_fix_ms = actual_ts
 
         # 5. Moving window smoothed current speed (last 5 points)
         self.window.append((latitude, longitude, actual_ts))
@@ -338,7 +565,10 @@ class TripTracker:
             self.total_distance_km,
             letter,
         )
-        return point, "Punkt gespeichert"
+        msg = f"Punkt gespeichert{tolerance_reset_note}"
+        if step_note:
+            msg = f"{step_note} | {msg}"
+        return point, msg
 
 
 class SQLiteStore:

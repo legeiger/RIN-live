@@ -12,7 +12,7 @@ Built with **Python 3.12** and **[Flet](https://flet.dev)** (Flutter runtime).
 - **Domain & Persistence:** SQLite for time-series geospatial points and SAQ calculations (`models.py`).
 - **Packaging & Config:** PEP 621 compliant `pyproject.toml`.
 - **Target Platform:** Android APK (Foreground Service + Background Location).
-
+- **DEV:** Inside docker container with compose file already set up for running flet.
 ---
 
 ## Development Setup

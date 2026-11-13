@@ -17,7 +17,10 @@ from models import (
     SQLiteStore,
     Settings,
     TripTracker,
+    calc_detour_factor,
     format_duration,
+    match_bahn_wifi_ssid,
+    scan_local_wifi_ssids,
     timestamp_ms,
 )
 
@@ -44,6 +47,21 @@ SAQ_COLORS = {
 }
 
 
+@ft.value
+class AndroidNaviLocationConfiguration(ftg.GeolocatorAndroidConfiguration):
+    """Android location configuration that serializes both nested and top-level
+    foreground notification properties for Flet's Dart geolocator parser,
+    enabling persistent navigation-mode background service + wake/wifi locks.
+    """
+
+    foreground_notification_text: str | None = None
+    foreground_notification_title: str | None = None
+    foreground_notification_channel_name: str = "RIN-Live Aufzeichnung"
+    foreground_notification_enable_wake_lock: bool = True
+    foreground_notification_enable_wifi_lock: bool = True
+    foreground_notification_set_ongoing: bool = True
+
+
 class RinApp:
     """Flet UI for RIN-Live tracking and SAQ evaluation."""
 
@@ -62,25 +80,21 @@ class RinApp:
         self.logs = ["RIN-Live bereit.", "SQLite-Speicher initialisiert."]
         self.location_permission_status: ftg.GeolocatorPermissionStatus | None = None
 
-        # GPS background service
+        # GPS + Wi-Fi + Cellular fused location background service (Navi-grade)
+        self._last_notification_title: str = ""
+        self._last_notification_text: str = ""
+        self._last_notification_ongoing: bool | None = None
+        self._last_wifi_scan_s: float = 0.0
+        self._last_bahn_seen_ms: int = 0
         self.geolocator = ftg.Geolocator(
-            configuration=ftg.GeolocatorAndroidConfiguration(
-                accuracy=ftg.GeolocatorPositionAccuracy.BEST_FOR_NAVIGATION,
-                distance_filter=1,
-                interval_duration=int(self.settings.gps_interval * 1000),
-                foreground_notification_config=ftg.ForegroundNotificationConfiguration(
-                    notification_title="RIN-Live",
-                    notification_text="RIN-Live ist bereit.",
-                    notification_channel_name="RIN-Live Aufzeichnung",
-                    notification_enable_wake_lock=True,
-                    notification_set_ongoing=False,
-                ),
+            configuration=self._build_geolocator_config(
+                title="RIN-Live",
+                text="RIN-Live ist bereit.",
+                ongoing=False,
             ),
             on_position_change=self._on_position_change,
             on_error=self._on_location_error,
         )
-        self._last_notification_title: str = ""
-        self._last_notification_text: str = ""
         self.file_picker = ft.FilePicker()
         self.share_service = ft.Share()
         self.clipboard = ft.Clipboard()
@@ -139,6 +153,33 @@ class RinApp:
             except RuntimeError:
                 pass
 
+    def _build_geolocator_config(
+        self,
+        title: str,
+        text: str,
+        ongoing: bool,
+    ) -> AndroidNaviLocationConfiguration:
+        return AndroidNaviLocationConfiguration(
+            accuracy=ftg.GeolocatorPositionAccuracy.BEST_FOR_NAVIGATION,
+            distance_filter=0,
+            interval_duration=int(max(1.0, self.settings.gps_interval) * 1000),
+            force_location_manager=False,
+            foreground_notification_config=ftg.ForegroundNotificationConfiguration(
+                notification_title=title,
+                notification_text=text,
+                notification_channel_name="RIN-Live Aufzeichnung",
+                notification_enable_wake_lock=True,
+                notification_enable_wifi_lock=True,
+                notification_set_ongoing=ongoing,
+            ),
+            foreground_notification_title=title,
+            foreground_notification_text=text,
+            foreground_notification_channel_name="RIN-Live Aufzeichnung",
+            foreground_notification_enable_wake_lock=True,
+            foreground_notification_enable_wifi_lock=True,
+            foreground_notification_set_ongoing=ongoing,
+        )
+
     @property
     def recording(self) -> bool:
         return self.recording_state == "RECORDING"
@@ -151,64 +192,162 @@ class RinApp:
     async def _clock(self) -> None:
         while True:
             await asyncio.sleep(1)
+            now_s = time.time()
+            now_ms = int(now_s * 1000)
+
+            # Check Wi-Fi environment (visible SSIDs) every 10 seconds for ICE/Bahn detection
+            if now_s - self._last_wifi_scan_s >= 10.0:
+                self._last_wifi_scan_s = now_s
+                await self._check_wifi_environment(now_ms)
+
             if self.recording_state == "RECORDING":
+                # Stepwise accuracy tolerance adjustment after 30s without valid fix
+                tol_msg = self.tracker.update_accuracy_tolerance(now_ms)
+                if tol_msg:
+                    self._log(tol_msg)
+
+                # Active fallback poll if stream hasn't yielded a valid fix for >=15s
+                last_fix = self.tracker.last_valid_fix_ms or self.tracker.started_ms or now_ms
+                if (now_ms - last_fix >= 15_000) and ((now_ms // 1000) % 10 == 0):
+                    if hasattr(self._page, "run_task"):
+                        self._page.run_task(self._poll_coarse_position)
+
                 self._update_notification()
-                if self.active_tab == "dashboard":
+                if self.active_tab in {"dashboard", "debug"}:
                     self.render()
 
+    async def _check_wifi_environment(self, now_ms: int) -> None:
+        """Scan visible Wi-Fi SSIDs (no connection required) to detect ICE/Bahn mode."""
+        ssids: list[str] = []
+        try:
+            res = await self.geolocator._invoke_method(
+                "get_wifi_ssids",
+                timeout=4,
+            )
+            if isinstance(res, list):
+                ssids.extend(str(s) for s in res if s)
+        except Exception:
+            pass
+
+        if not ssids:
+            try:
+                local_ssids = await asyncio.to_thread(scan_local_wifi_ssids)
+                if local_ssids:
+                    ssids.extend(local_ssids)
+            except Exception:
+                pass
+
+        matched_ssid = match_bahn_wifi_ssid(ssids)
+        if matched_ssid:
+            self._last_bahn_seen_ms = now_ms
+            msg = self.tracker.set_bahn_mode(True, matched_ssid)
+            if msg:
+                self._log(msg)
+                if self.active_tab in {"dashboard", "debug"}:
+                    self.render()
+        elif self.tracker.bahn_mode and (now_ms - self._last_bahn_seen_ms > 120_000):
+            msg = self.tracker.set_bahn_mode(False)
+            if msg:
+                self._log(msg)
+                if self.active_tab in {"dashboard", "debug"}:
+                    self.render()
+
+    async def _poll_coarse_position(self) -> None:
+        """Fallback poll when waiting for a fix inside trains/buildings."""
+        if self.recording_state != "RECORDING":
+            return
+        try:
+            pos = await self.geolocator.get_current_position(
+                location_settings=ftg.GeolocatorConfiguration(
+                    accuracy=ftg.GeolocatorPositionAccuracy.HIGH,
+                    time_limit=ft.Duration(seconds=6),
+                )
+            )
+            if pos is not None:
+                self._process_position(pos)
+        except Exception:
+            pass
+
+    def _format_notification_payload(self) -> tuple[str, str, bool]:
+        mode = self.settings.mode or "IOE"
+        bahn_tag = " · 🚄 ICE/Bahn" if self.tracker.bahn_mode else ""
+        if self.recording_state == "RECORDING":
+            metrics = self.tracker.metrics
+            saq = self.tracker.current_saq()
+            detour = max(1.0, metrics.detour_factor)
+            title = f"RIN-Live ({mode}){bahn_tag} · Aktiv"
+            text = (
+                f"SAQ {saq.letter} · Umweg {detour:.1f} · "
+                f"{metrics.total_distance_km:.1f} km (Luft {metrics.straight_distance_km:.1f} km) · "
+                f"V {metrics.current_speed_kmh:.0f} km/h"
+            )
+            return title, text, True
+        if self.recording_state == "PAUSED":
+            metrics = self.tracker.metrics
+            saq = self.tracker.current_saq()
+            detour = max(1.0, metrics.detour_factor)
+            title = f"RIN-Live ({mode}){bahn_tag} · Pausiert"
+            text = (
+                f"SAQ {saq.letter} · Umweg {detour:.1f} · "
+                f"{metrics.total_distance_km:.1f} km (Luft {metrics.straight_distance_km:.1f} km)"
+            )
+            return title, text, True
+        return "RIN-Live", "RIN-Live ist bereit.", False
+
+    def _reconfigure_geolocator_stream(self) -> None:
+        """Update the geolocator stream configuration (only on recording state or interval changes)."""
+        try:
+            if not hasattr(self, "geolocator") or self.geolocator is None:
+                return
+            title, text, ongoing = self._format_notification_payload()
+            self._last_notification_title = title
+            self._last_notification_text = text
+            self._last_notification_ongoing = ongoing
+            self.geolocator.configuration = self._build_geolocator_config(
+                title=title,
+                text=text,
+                ongoing=ongoing,
+            )
+            self.geolocator.update()
+        except Exception:
+            pass
+
     def _update_notification(self) -> None:
+        """Update persistent notification text in-place without restarting the GPS stream."""
         try:
             if not hasattr(self, "geolocator") or self.geolocator is None:
                 return
 
-            mode = self.settings.mode or "IOE"
-            if self.recording_state == "RECORDING":
-                metrics = self.tracker.metrics
-                saq = self.tracker.current_saq()
-                title = f"RIN-Live ({mode})"
-                text = (
-                    f"Distanz: {metrics.total_distance_km:.1f} km, "
-                    f"Luftlinie: {metrics.straight_distance_km:.1f} km, "
-                    f"V: {metrics.current_speed_kmh:.1f} km/h, "
-                    f"VLuft: {metrics.straight_speed_kmh:.1f} km/h, "
-                    f"SAQ: {saq.letter} ({mode})"
-                )
-                ongoing = True
-            elif self.recording_state == "PAUSED":
-                metrics = self.tracker.metrics
-                saq = self.tracker.current_saq()
-                title = f"RIN-Live ({mode}) · Pausiert"
-                text = (
-                    f"Distanz: {metrics.total_distance_km:.1f} km, "
-                    f"Luftlinie: {metrics.straight_distance_km:.1f} km, "
-                    f"V: 0.0 km/h, "
-                    f"VLuft: {metrics.straight_speed_kmh:.1f} km/h, "
-                    f"SAQ: {saq.letter} ({mode})"
-                )
-                ongoing = True
-            else:
-                title = "RIN-Live"
-                text = "RIN-Live ist bereit."
-                ongoing = False
-
-            if title == self._last_notification_title and text == self._last_notification_text:
+            title, text, ongoing = self._format_notification_payload()
+            if (
+                title == self._last_notification_title
+                and text == self._last_notification_text
+                and ongoing == self._last_notification_ongoing
+            ):
                 return
             self._last_notification_title = title
             self._last_notification_text = text
+            self._last_notification_ongoing = ongoing
 
-            self.geolocator.configuration = ftg.GeolocatorAndroidConfiguration(
-                accuracy=ftg.GeolocatorPositionAccuracy.BEST_FOR_NAVIGATION,
-                distance_filter=1,
-                interval_duration=int(self.settings.gps_interval * 1000),
-                foreground_notification_config=ftg.ForegroundNotificationConfiguration(
-                    notification_title=title,
-                    notification_text=text,
-                    notification_channel_name="RIN-Live Aufzeichnung",
-                    notification_enable_wake_lock=True,
-                    notification_set_ongoing=ongoing,
-                ),
+            if hasattr(self._page, "run_task"):
+                self._page.run_task(self._push_notification_native, title, text, ongoing)
+        except Exception:
+            pass
+
+    async def _push_notification_native(self, title: str, text: str, ongoing: bool) -> None:
+        try:
+            await self.geolocator._invoke_method(
+                "update_notification",
+                {
+                    "notificationTitle": title,
+                    "notificationText": text,
+                    "notificationChannelName": "RIN-Live Aufzeichnung",
+                    "enableWakeLock": True,
+                    "enableWifiLock": True,
+                    "setOngoing": ongoing,
+                },
+                timeout=3,
             )
-            self.geolocator.update()
         except Exception:
             pass
 
@@ -472,11 +611,16 @@ class RinApp:
             self._log(f"Berechtigungs-Check: {perm_err}")
 
         start_time = int(time.time() * 1000)
+        await self._check_wifi_environment(start_time)
         session_id = self.tracker.start(start_time)
         self.store.start_session(session_id, self.settings.mode)
         self.recording_state = "RECORDING"
+        self._reconfigure_geolocator_stream()
         self._update_notification()
-        self._log(f"Aufzeichnung gestartet: {session_id} (2s Intervall, 5m Genauigkeit).")
+        self._log(
+            f"Aufzeichnung gestartet: {session_id} "
+            f"({self.settings.gps_interval:g}s Intervall, <{self.tracker.effective_accuracy_m:.0f}m Toleranz)."
+        )
         try:
             position = await self.geolocator.get_current_position()
             if position is not None:
@@ -532,6 +676,7 @@ class RinApp:
     def stop_recording(self) -> None:
         session_id = self.tracker.session_id
         self.recording_state = "IDLE"
+        self._reconfigure_geolocator_stream()
         self._update_notification()
         self._log(f"Aufzeichnung beendet und gespeichert: {session_id}")
         self.render()
@@ -611,6 +756,7 @@ class RinApp:
             self.store.clear_session(self.tracker.session_id)
         self.tracker.reset()
         self.recording_state = "IDLE"
+        self._reconfigure_geolocator_stream()
         self._update_notification()
         self.csv_visible = False
         self._log("Aufzeichnung und Messdaten zurückgesetzt.")
@@ -860,6 +1006,9 @@ class RinApp:
 
     def save_settings(self, _event) -> None:
         self.store.save_settings(self.settings)
+        self.tracker.current_tolerance_m = self.tracker.base_accuracy_m
+        self._reconfigure_geolocator_stream()
+        self._update_notification()
         self._log("Konfiguration gespeichert.")
         self.render()
 
@@ -1138,19 +1287,38 @@ class RinApp:
             border=ft.Border.all(1, "rgba(255,255,255,0.06)"),
         )
 
+    def _home_tab_button(self) -> ft.Control:
+        is_active = self.active_tab == "dashboard"
+        return ft.Button(
+            content=ft.Icon(
+                ft.Icons.HOME_ROUNDED,
+                size=20,
+                color="#ffffff" if is_active else "rgba(255,255,255,0.78)",
+            ),
+            bgcolor=COLOR_PRIMARY if is_active else "rgba(255,255,255,0.06)",
+            tooltip="Home (Dashboard)",
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=6),
+                padding=ft.Padding.symmetric(vertical=9, horizontal=16),
+                elevation=0,
+            ),
+            on_click=self.switch_tab("dashboard"),
+        )
+
     def _tab_button(self, label: str, tab: str) -> ft.Control:
         is_active = self.active_tab == tab
         return ft.Button(
             content=ft.Text(
                 label,
-                size=13.5,
+                size=13,
                 weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.W_600,
                 color="#ffffff" if is_active else "rgba(255,255,255,0.75)",
+                no_wrap=True,
             ),
             bgcolor=COLOR_PRIMARY if is_active else "rgba(255,255,255,0.06)",
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=6),
-                padding=ft.Padding.symmetric(vertical=10, horizontal=6),
+                padding=ft.Padding.symmetric(vertical=10, horizontal=8),
                 elevation=0,
             ),
             on_click=self.switch_tab(tab),
@@ -1164,12 +1332,17 @@ class RinApp:
         letter = saq.letter if has_data else "-"
         grade_desc = f"Stufe {saq.grade}" if has_data else "Stufe -"
         if self.recording_state == "PAUSED":
-            grade_desc += " · PAUSIERT"
+            grade_desc += " · PAUSE"
         elif self.recording_state == "RECORDING":
             grade_desc += " · LIVE"
         elif self.tracker.session_id:
-            grade_desc += " · Gespeichert"
+            grade_desc += " · Archiv"
         saq_color = SAQ_COLORS.get(letter, "#718096")
+
+        # Detour factor clamped to >= 1.0 with 1 decimal place
+        detour_val = max(1.0, calc_detour_factor(metrics.total_distance_km, metrics.straight_distance_km))
+        detour_str = f"{detour_val:.1f}"
+        detour_color = COLOR_PRIMARY if has_data else "#718096"
 
         if self.recording_state in {"RECORDING", "PAUSED"}:
             elapsed = self.tracker.effective_elapsed_ms(int(time.time() * 1000))
@@ -1194,14 +1367,26 @@ class RinApp:
                 st_label = "GELADENE FAHRT"
                 st_icon = ft.Icons.FOLDER_OPEN_ROUNDED
 
+            banner_controls = [
+                ft.Icon(st_icon, color=st_color, size=15),
+                ft.Text(f"{st_label}: {self.tracker.session_id}", size=11, weight=ft.FontWeight.BOLD, color=st_color),
+            ]
+            if self.tracker.bahn_mode:
+                banner_controls.append(
+                    ft.Container(
+                        content=ft.Text("🚄 ICE/Bahn", size=9.5, weight=ft.FontWeight.BOLD, color="#69F0AE"),
+                        bgcolor="rgba(16, 185, 129, 0.16)",
+                        border_radius=4,
+                        padding=ft.Padding.symmetric(horizontal=6, vertical=1),
+                    )
+                )
+
             track_banner = ft.Container(
                 content=ft.Row(
-                    controls=[
-                        ft.Icon(st_icon, color=st_color, size=15),
-                        ft.Text(f"{st_label}: {self.tracker.session_id}", size=11, weight=ft.FontWeight.BOLD, color=st_color),
-                    ],
+                    controls=banner_controls,
                     alignment=ft.MainAxisAlignment.CENTER,
                     spacing=6,
+                    wrap=True,
                 ),
                 bgcolor="rgba(255, 255, 255, 0.04)",
                 border_radius=6,
@@ -1209,32 +1394,34 @@ class RinApp:
                 border=ft.Border.all(1, f"{st_color}33"),
             )
 
-        # 1. Hero Card: ANGEBOTSQUALITÄT (SAQ) - streamlined horizontal layout to eliminate viewport overflow
+        # 1. First Row (Two-Column Hero Row): SAQ + UMWEGFAKTOR in matching design
         saq_hero_card = ft.Container(
             content=ft.Row(
                 controls=[
                     ft.Container(
                         content=ft.Text(
                             letter,
-                            size=42,
+                            size=36,
                             weight=ft.FontWeight.W_800,
                             color=saq_color,
                         ),
-                        padding=ft.Padding.only(left=8, right=14),
+                        padding=ft.Padding.only(left=4, right=10),
                     ),
                     ft.Column(
                         controls=[
                             ft.Text(
-                                "ANGEBOTSQUALITÄT (SAQ)",
-                                size=10,
+                                "SAQ-STUFE",
+                                size=9.5,
                                 weight=ft.FontWeight.BOLD,
                                 color="rgba(255, 255, 255, 0.7)",
+                                no_wrap=True,
                             ),
                             ft.Text(
                                 grade_desc,
-                                size=13,
+                                size=11.5,
                                 weight=ft.FontWeight.BOLD,
                                 color="#ffffff",
+                                no_wrap=True,
                             ),
                         ],
                         spacing=2,
@@ -1244,11 +1431,63 @@ class RinApp:
                 ],
                 alignment=ft.MainAxisAlignment.START,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=0,
             ),
             bgcolor=COLOR_CARD,
             border=ft.Border.all(1, "rgba(255, 255, 255, 0.08)"),
             border_radius=6,
-            padding=ft.Padding.symmetric(vertical=8, horizontal=14),
+            padding=ft.Padding.symmetric(vertical=8, horizontal=10),
+            expand=True,
+        )
+
+        detour_hero_card = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Container(
+                        content=ft.Text(
+                            detour_str,
+                            size=34,
+                            weight=ft.FontWeight.W_800,
+                            color=detour_color,
+                        ),
+                        padding=ft.Padding.only(left=4, right=10),
+                    ),
+                    ft.Column(
+                        controls=[
+                            ft.Text(
+                                "UMWEGFAKTOR",
+                                size=9.5,
+                                weight=ft.FontWeight.BOLD,
+                                color="rgba(255, 255, 255, 0.7)",
+                                no_wrap=True,
+                            ),
+                            ft.Text(
+                                "Fahrt / Luft",
+                                size=11.5,
+                                weight=ft.FontWeight.BOLD,
+                                color="#ffffff",
+                                no_wrap=True,
+                            ),
+                        ],
+                        spacing=2,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        expand=True,
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.START,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=0,
+            ),
+            bgcolor=COLOR_CARD,
+            border=ft.Border.all(1, "rgba(255, 255, 255, 0.08)"),
+            border_radius=6,
+            padding=ft.Padding.symmetric(vertical=8, horizontal=10),
+            expand=True,
+        )
+
+        hero_top_row = ft.Row(
+            controls=[saq_hero_card, detour_hero_card],
+            spacing=8,
         )
 
         # 2. Line Chart (clean height of 215px to fit screen without scrolling)
@@ -1295,7 +1534,7 @@ class RinApp:
         if perm_container:
             dash_controls.append(perm_container)
         dash_controls.extend([
-            saq_hero_card,
+            hero_top_row,
             chart_container,
             row_dist,
             row_speed,
@@ -1901,13 +2140,24 @@ class RinApp:
         else:
             loc_info = "Warte auf GPS-Signal..."
 
+        mode_label = (
+            f"🚄 ICE/Bahn ({self.tracker.bahn_ssid})"
+            if self.tracker.bahn_mode
+            else "Standard (GPS + WLAN + Mobilfunk)"
+        )
+        tol_label = (
+            f"{self.settings.gps_interval:g} s / aktiv < {self.tracker.effective_accuracy_m:.0f} m "
+            f"(Basis: < {self.tracker.base_accuracy_m:.0f} m)"
+        )
+
         self.debug_column.controls = [
             ft.Container(
                 content=ft.Column(
                     controls=[
                         ft.Row([ft.Text("Status:", weight=ft.FontWeight.BOLD), ft.Text("RECORDING" if self.recording else "INAKTIV", color=COLOR_DANGER if self.recording else COLOR_PRIMARY)]),
+                        ft.Row([ft.Text("Ortungsmodus:", weight=ft.FontWeight.BOLD), ft.Text(mode_label, size=12, color="#69F0AE" if self.tracker.bahn_mode else COLOR_TEXT_PRIMARY)]),
                         ft.Row([ft.Text("GPS Signal:", weight=ft.FontWeight.BOLD), ft.Text(loc_info, size=12)]),
-                        ft.Row([ft.Text("Intervall / Genauigkeit:", weight=ft.FontWeight.BOLD), ft.Text(f"{self.settings.gps_interval} s / < {self.settings.min_accuracy} m", size=12)]),
+                        ft.Row([ft.Text("Intervall / Toleranz:", weight=ft.FontWeight.BOLD), ft.Text(tol_label, size=12)]),
                     ],
                     spacing=6,
                 ),
@@ -2188,13 +2438,31 @@ class RinApp:
         content = views[self.active_tab]()
         self.content_container.content = content
 
+        title_row_controls: list[ft.Control] = [
+            ft.Text("RIN-Live", size=22, weight=ft.FontWeight.BOLD, color="#ffffff"),
+        ]
+        if self.tracker.bahn_mode:
+            title_row_controls.append(
+                ft.Container(
+                    content=ft.Text("🚄 ICE/Bahn", size=10.5, weight=ft.FontWeight.BOLD, color="#69F0AE"),
+                    bgcolor="rgba(16, 185, 129, 0.16)",
+                    border=ft.Border.all(1, "rgba(16, 185, 129, 0.35)"),
+                    border_radius=4,
+                    padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+                )
+            )
+
         header_bar = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("RIN-Live", size=22, weight=ft.FontWeight.BOLD, color="#ffffff"),
+                    ft.Row(
+                        controls=title_row_controls,
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     ft.Row(
                         controls=[
-                            self._tab_button("Dashboard", "dashboard"),
+                            self._home_tab_button(),
                             self._tab_button("Daten", "data"),
                             self._tab_button("Debug", "debug"),
                             self._tab_button("⚙ Config", "settings"),

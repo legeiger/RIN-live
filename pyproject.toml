@@ -1,6 +1,6 @@
 [project]
 name = "rin-live"
-version = "0.9.1"
+version = "0.9.2"
 description = "Real-time RIN 2008 journey tracking and SAQ evaluation."
 requires-python = ">=3.12"
 authors = [
@@ -44,16 +44,20 @@ project = "rin"
 product = "RIN-Live"
 company = "ISV - Universität Stuttgart"
 copyright = "Copyright (C) 2026 ISV Universität Stuttgart"
+permissions = ["location"]
 
-[tool.flet.android]
-permissions = [
-    "android.permission.ACCESS_FINE_LOCATION",
-    "android.permission.ACCESS_COARSE_LOCATION",
-    "android.permission.ACCESS_BACKGROUND_LOCATION",
-    "android.permission.FOREGROUND_SERVICE",
-    "android.permission.FOREGROUND_SERVICE_LOCATION",
-    "android.permission.WAKE_LOCK"
-]
+[tool.flet.android.permission]
+"android.permission.ACCESS_FINE_LOCATION" = true
+"android.permission.ACCESS_COARSE_LOCATION" = true
+"android.permission.ACCESS_BACKGROUND_LOCATION" = true
+"android.permission.FOREGROUND_SERVICE" = true
+"android.permission.FOREGROUND_SERVICE_LOCATION" = true
+"android.permission.WAKE_LOCK" = true
+"android.permission.ACCESS_WIFI_STATE" = true
+"android.permission.CHANGE_WIFI_STATE" = true
+"android.permission.ACCESS_NETWORK_STATE" = true
+"android.permission.POST_NOTIFICATIONS" = true
+"android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" = true
 
 [tool.flet.flutter.pubspec.dependency_overrides]
 jni = "1.1.0"
