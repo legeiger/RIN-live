@@ -1455,16 +1455,9 @@ class RinApp:
                         controls=[
                             ft.Text(
                                 "UMWEGFAKTOR",
-                                size=9.5,
+                                size=10,
                                 weight=ft.FontWeight.BOLD,
                                 color="rgba(255, 255, 255, 0.7)",
-                                no_wrap=True,
-                            ),
-                            ft.Text(
-                                "Fahrt / Luft",
-                                size=11.5,
-                                weight=ft.FontWeight.BOLD,
-                                color="#ffffff",
                                 no_wrap=True,
                             ),
                         ],

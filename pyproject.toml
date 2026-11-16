@@ -1,6 +1,6 @@
 [project]
 name = "rin-live"
-version = "0.9.3"
+version = "0.9.4"
 description = "Real-time RIN 2008 journey tracking and SAQ evaluation."
 requires-python = ">=3.12"
 authors = [
