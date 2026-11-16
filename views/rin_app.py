@@ -163,7 +163,6 @@ class RinApp:
             accuracy=ftg.GeolocatorPositionAccuracy.BEST_FOR_NAVIGATION,
             distance_filter=0,
             interval_duration=int(max(1.0, self.settings.gps_interval) * 1000),
-            force_location_manager=False,
             foreground_notification_config=ftg.ForegroundNotificationConfiguration(
                 notification_title=title,
                 notification_text=text,
@@ -258,7 +257,7 @@ class RinApp:
             return
         try:
             pos = await self.geolocator.get_current_position(
-                location_settings=ftg.GeolocatorConfiguration(
+                configuration=ftg.GeolocatorConfiguration(
                     accuracy=ftg.GeolocatorPositionAccuracy.HIGH,
                     time_limit=ft.Duration(seconds=6),
                 )

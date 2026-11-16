@@ -1,6 +1,6 @@
 [project]
 name = "rin-live"
-version = "0.9.2"
+version = "0.9.3"
 description = "Real-time RIN 2008 journey tracking and SAQ evaluation."
 requires-python = ">=3.12"
 authors = [
@@ -25,14 +25,16 @@ py-modules = ["main", "models"]
 dev = [
     "flet-cli>=1.0.1",
     "flet-desktop>=1.0.1",
-    "flet-web>=1.0.1"
+    "flet-web>=1.0.1",
+    "flet-mcp>=1.0.1"
 ]
 
 [dependency-groups]
 dev = [
     "flet-cli>=1.0.1",
     "flet-desktop>=1.0.1",
-    "flet-web>=1.0.1"
+    "flet-web>=1.0.1",
+    "flet-mcp>=1.0.1"
 ]
 
 [tool.flet.metadata]
